@@ -1,0 +1,132 @@
+{
+  "realm": "nirka-inventory",
+  "displayName": "Nirka Inventory",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "rememberMe": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "worker",
+        "description": "Can create and review assigned warehouse transactions."
+      },
+      {
+        "name": "manager",
+        "description": "Can review inventory, discrepancies and approvals."
+      },
+      {
+        "name": "administrator",
+        "description": "Can administer inventory users and system settings."
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "nirka-inventory-api",
+      "name": "Nirka Inventory API",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "bearerOnly": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false
+    },
+    {
+      "clientId": "nirka-inventory-web",
+      "name": "Nirka Inventory Web",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:3000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "inventory-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "nirka-inventory-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "lightweight.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "worker1",
+      "email": "worker1@nirka.local",
+      "firstName": "Warehouse",
+      "lastName": "Worker",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": [
+        "worker"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Worker@123",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "manager1",
+      "email": "manager1@nirka.local",
+      "firstName": "Inventory",
+      "lastName": "Manager",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": [
+        "worker",
+        "manager"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Manager@123",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "admin1",
+      "email": "admin1@nirka.local",
+      "firstName": "Inventory",
+      "lastName": "Administrator",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": [
+        "worker",
+        "manager",
+        "administrator"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Admin@123",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

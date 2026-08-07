@@ -1,0 +1,11 @@
+CREATE TYPE "TaskType" AS ENUM ('RECOUNT','CYCLE_COUNT','RECEIVE','PICK','TRANSFER','STOCK_VERIFY','DAMAGE_INSPECTION');
+CREATE TYPE "TaskPriority" AS ENUM ('LOW','MEDIUM','HIGH','URGENT');
+CREATE TYPE "TaskStatus" AS ENUM ('OPEN','IN_PROGRESS','COMPLETED','CANCELLED');
+CREATE TABLE "inventory_tasks" ("id" TEXT NOT NULL,"type" "TaskType" NOT NULL,"priority" "TaskPriority" NOT NULL DEFAULT 'MEDIUM',"status" "TaskStatus" NOT NULL DEFAULT 'OPEN',"title" TEXT NOT NULL,"description" TEXT,"dueAt" TIMESTAMP(3),"assignedToId" TEXT,"productId" TEXT,"locationId" TEXT,"sourceTransactionId" TEXT,"createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,"startedAt" TIMESTAMP(3),"completedAt" TIMESTAMP(3),CONSTRAINT "inventory_tasks_pkey" PRIMARY KEY ("id"));
+CREATE UNIQUE INDEX "inventory_tasks_sourceTransactionId_key" ON "inventory_tasks"("sourceTransactionId");
+CREATE INDEX "inventory_tasks_assignedToId_status_dueAt_idx" ON "inventory_tasks"("assignedToId","status","dueAt");
+CREATE INDEX "inventory_tasks_status_priority_dueAt_idx" ON "inventory_tasks"("status","priority","dueAt");
+ALTER TABLE "inventory_tasks" ADD CONSTRAINT "inventory_tasks_assignedToId_fkey" FOREIGN KEY ("assignedToId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "inventory_tasks" ADD CONSTRAINT "inventory_tasks_productId_fkey" FOREIGN KEY ("productId") REFERENCES "products"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "inventory_tasks" ADD CONSTRAINT "inventory_tasks_locationId_fkey" FOREIGN KEY ("locationId") REFERENCES "locations"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "inventory_tasks" ADD CONSTRAINT "inventory_tasks_sourceTransactionId_fkey" FOREIGN KEY ("sourceTransactionId") REFERENCES "inventory_transactions"("id") ON DELETE SET NULL ON UPDATE CASCADE;

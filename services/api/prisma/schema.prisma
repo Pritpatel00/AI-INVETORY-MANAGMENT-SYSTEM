@@ -1,0 +1,300 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  WORKER
+  MANAGER
+  ADMINISTRATOR
+}
+
+enum InventoryAction {
+  RECEIVE
+  SHIP
+  USE
+  TRANSFER
+  CYCLE_COUNT
+  DAMAGE
+  LOSS
+}
+
+enum StockCondition {
+  GOOD
+  DAMAGED
+  HOLD
+}
+
+enum TransactionStatus {
+  PENDING
+  RECOUNT_REQUESTED
+  APPROVED
+  REJECTED
+  POSTED
+  CANCELLED
+}
+
+enum ReorderStatus {
+  DRAFT
+  APPROVED
+  SENT
+  CANCELLED
+}
+
+enum EmailDeliveryStatus {
+  NOT_QUEUED
+  QUEUED
+  SENT
+  FAILED
+}
+
+model User {
+  id                   String                 @id @default(uuid())
+  employeeId           String                 @unique
+  email                String                 @unique
+  displayName          String
+  role                 UserRole
+  active               Boolean                @default(true)
+  lastLoginAt          DateTime?              @map("last_login_at")
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  createdTransactions  InventoryTransaction[] @relation("CreatedTransactions")
+  approvedTransactions InventoryTransaction[] @relation("ApprovedTransactions")
+  approvedReorderDrafts ReorderDraft[]         @relation("ApprovedReorderDrafts")
+  voiceEvidence        VoiceEvidence[]
+  assignedTasks        InventoryTask[]        @relation("AssignedTasks")
+
+  @@map("users")
+}
+
+model UserAccessAudit {
+  id                  String   @id @default(uuid())
+  action              String
+  actorUsername       String   @map("actor_username")
+  actorEmail          String?  @map("actor_email")
+  targetUserId        String   @map("target_user_id")
+  targetEmployeeId    String   @map("target_employee_id")
+  targetDisplayName   String   @map("target_display_name")
+  details             String?
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([targetUserId])
+  @@map("user_access_audit")
+}
+
+model Product {
+  id              String                 @id @default(uuid())
+  sku             String                 @unique
+  name            String
+  unit            String                 @default("unit")
+  safetyStock     Int                    @default(0)
+  reorderQuantity Int                    @default(0)
+  supplierName    String?
+  supplierEmail   String?
+  supplierId      String?
+  active          Boolean                @default(true)
+  controlled      Boolean                @default(false)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  balances        InventoryBalance[]
+  transactions    InventoryTransaction[]
+  reorderDrafts   ReorderDraft[]
+  supplier        Supplier?              @relation(fields: [supplierId], references: [id])
+  tasks           InventoryTask[]
+
+  @@index([supplierId])
+
+  @@map("products")
+}
+
+model Location {
+  id                      String                 @id @default(uuid())
+  code                    String                 @unique
+  name                    String
+  description             String?
+  active                  Boolean                @default(true)
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+  balances                InventoryBalance[]
+  sourceTransactions      InventoryTransaction[] @relation("SourceLocationTransactions")
+  destinationTransactions InventoryTransaction[] @relation("DestinationLocationTransactions")
+  reorderDrafts           ReorderDraft[]
+  tasks                   InventoryTask[]
+
+  @@map("locations")
+}
+
+model InventoryBalance {
+  id               String   @id @default(uuid())
+  productId        String
+  locationId       String
+  quantity         Int      @default(0)
+  reservedQuantity Int      @default(0)
+  updatedAt        DateTime @updatedAt
+  product          Product  @relation(fields: [productId], references: [id])
+  location         Location @relation(fields: [locationId], references: [id])
+
+  @@unique([productId, locationId])
+  @@index([locationId])
+  @@map("inventory_balances")
+}
+
+model InventoryTransaction {
+  id                    String            @id @default(uuid())
+  clientRequestId       String?           @unique
+  action                InventoryAction
+  status                TransactionStatus @default(PENDING)
+  productId             String
+  quantity              Int
+  condition             StockCondition    @default(GOOD)
+  sourceLocationId      String?
+  destinationLocationId String?
+  referenceNumber       String?
+  notes                 String?
+  reviewNotes           String?
+  reviewReasons         String?
+  transcript            String?
+  systemQuantityBefore  Int?              @map("system_quantity_before")
+  discrepancyDifference Int?              @map("discrepancy_difference")
+  discrepancyPercentage Float?            @map("discrepancy_percentage")
+  significantDiscrepancy Boolean          @default(false) @map("significant_discrepancy")
+  createdById           String?
+  approvedById          String?
+  createdAt             DateTime          @default(now())
+  confirmedAt           DateTime?
+  approvedAt            DateTime?
+  postedAt              DateTime?
+  product               Product           @relation(fields: [productId], references: [id])
+  sourceLocation        Location?         @relation("SourceLocationTransactions", fields: [sourceLocationId], references: [id])
+  destinationLocation   Location?         @relation("DestinationLocationTransactions", fields: [destinationLocationId], references: [id])
+  createdBy             User?             @relation("CreatedTransactions", fields: [createdById], references: [id])
+  approvedBy            User?             @relation("ApprovedTransactions", fields: [approvedById], references: [id])
+  voiceEvidence         VoiceEvidence[]
+  task                  InventoryTask?
+
+  @@index([productId, createdAt])
+  @@index([status, createdAt])
+  @@index([significantDiscrepancy, createdAt])
+  @@map("inventory_transactions")
+}
+
+enum TaskType {
+  RECOUNT
+  CYCLE_COUNT
+  RECEIVE
+  PICK
+  TRANSFER
+  STOCK_VERIFY
+  DAMAGE_INSPECTION
+}
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model InventoryTask {
+  id                    String        @id @default(uuid())
+  type                  TaskType
+  priority              TaskPriority  @default(MEDIUM)
+  status                TaskStatus    @default(OPEN)
+  title                 String
+  description           String?
+  dueAt                 DateTime?
+  assignedToId          String?
+  productId             String?
+  locationId            String?
+  sourceTransactionId   String?       @unique
+  sourceReorderDraftId  String?       @unique @map("source_reorder_draft_id")
+  createdAt             DateTime      @default(now())
+  startedAt             DateTime?
+  completedAt           DateTime?
+  assignedTo            User?         @relation("AssignedTasks", fields: [assignedToId], references: [id])
+  product               Product?      @relation(fields: [productId], references: [id])
+  location              Location?     @relation(fields: [locationId], references: [id])
+  sourceTransaction     InventoryTransaction? @relation(fields: [sourceTransactionId], references: [id])
+  sourceReorderDraft    ReorderDraft? @relation(fields: [sourceReorderDraftId], references: [id])
+  @@index([assignedToId, status, dueAt])
+  @@index([status, priority, dueAt])
+  @@map("inventory_tasks")
+}
+
+model VoiceEvidence {
+  id                  String                @id @default(uuid())
+  storageKey          String                @unique
+  originalFilename    String
+  mimeType            String
+  sizeBytes           Int
+  transcript          String
+  language            String?
+  languageProbability Float?
+  duration            Float?
+  createdById         String
+  transactionId       String?
+  createdAt           DateTime              @default(now())
+  createdBy           User                  @relation(fields: [createdById], references: [id])
+  transaction         InventoryTransaction? @relation(fields: [transactionId], references: [id])
+
+  @@index([createdById, createdAt])
+  @@index([transactionId])
+  @@map("voice_evidence")
+}
+
+model ReorderDraft {
+  id                String              @id @default(uuid())
+  activeKey         String?             @unique
+  productId         String
+  locationId        String
+  currentStock      Int
+  safetyStock       Int
+  suggestedQuantity Int
+  status            ReorderStatus       @default(DRAFT)
+  emailStatus       EmailDeliveryStatus @default(NOT_QUEUED)
+  reviewNotes       String?
+  approvedById      String?
+  approvedAt        DateTime?
+  cancelledAt       DateTime?
+  emailQueuedAt     DateTime?
+  emailSentAt       DateTime?
+  emailAttempts     Int                 @default(0)
+  emailError        String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  product           Product             @relation(fields: [productId], references: [id])
+  location          Location            @relation(fields: [locationId], references: [id])
+  approvedBy        User?               @relation("ApprovedReorderDrafts", fields: [approvedById], references: [id])
+  receivingTask     InventoryTask?
+
+  @@index([status, createdAt])
+  @@map("reorder_drafts")
+}
+
+model Supplier {
+  id                   String   @id @default(uuid())
+  code                 String   @unique
+  name                 String
+  contactName          String?
+  email                String?
+  phone                String?
+  address              String?
+  leadTimeDays         Int      @default(0)
+  minimumOrderQuantity Int      @default(0)
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  products             Product[]
+
+  @@map("suppliers")
+}

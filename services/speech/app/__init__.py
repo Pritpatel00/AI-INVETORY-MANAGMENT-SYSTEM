@@ -1,0 +1,1 @@
+"""Nirka local speech service."""

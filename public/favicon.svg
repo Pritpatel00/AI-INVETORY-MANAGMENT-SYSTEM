@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2E7BFF"/>
+      <stop offset="1" stop-color="#0D3FA8"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="40" y1="14" x2="56" y2="30" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9DC4FF"/>
+      <stop offset="1" stop-color="#5E8DFF"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" fill="url(#bg)"/>
+  <!-- warehouse roof -->
+  <path d="M13 45V27.8l19-9 19 9V45" stroke="#fff" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M20.5 45V33.5h23V45" stroke="#fff" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" opacity=".9"/>
+  <!-- roll-up door -->
+  <rect x="26.5" y="36.5" width="11" height="8.5" rx="1.6" fill="#fff" opacity=".96"/>
+  <line x1="26.5" y1="40.5" x2="37.5" y2="40.5" stroke="#0D3FA8" stroke-width="1.6" opacity=".55"/>
+  <!-- voice accent waves -->
+  <path d="M44.5 16.2a4.6 4.6 0 0 1 0 6.5" stroke="url(#accent)" stroke-width="2.6" stroke-linecap="round"/>
+  <path d="M47.8 12.8a8.7 8.7 0 0 1 0 13.3" stroke="url(#accent)" stroke-width="2.6" stroke-linecap="round"/>
+</svg>

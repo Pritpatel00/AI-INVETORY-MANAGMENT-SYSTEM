@@ -1,0 +1,8 @@
+{
+  // globals.css uses Tailwind CSS v4 at-rules (@theme, @import "tailwindcss",
+  // @apply, ...) which VS Code's built-in CSS validator does not recognize.
+  // Tailwind's PostCSS plugin validates and compiles them at build time, so
+  // the built-in linter should not flag them as "Unknown at rule" errors.
+  "css.lint.unknownAtRules": "ignore",
+  "scss.lint.unknownAtRules": "ignore"
+}

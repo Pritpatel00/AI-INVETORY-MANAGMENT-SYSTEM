@@ -1,0 +1,123 @@
+# Domain Rules — AI Voice Inventory System
+
+## Overview
+This document defines the domain rules for the AI-voice-driven warehouse inventory
+system. All code changes must conform to these rules.
+
+## 1. Worker Speaks (Voice Capture)
+- The worker initiates voice capture via a microphone button in the web UI.
+- Audio is captured as 16-bit mono PCM at 16 kHz.
+- Microphone access must be checked and tested before recording.
+- A floating draggable voice-assistant button provides quick access to voice entry.
+
+## 2. Speech-to-Text
+- Audio is sent to a local faster-whisper service for transcription.
+- The transcript, language, confidence, and duration are stored as VoiceEvidence.
+- VoiceEvidence is linked to the worker (createdById) and optionally to a transaction.
+
+## 3. AI Extraction
+- The AI service uses Qwen3 (via Ollama) to extract structured fields from the transcript.
+- Extracted fields: action, productSku, quantity, sourceLocationCode,
+  destinationLocationCode, condition, referenceNumber, notes, fieldConfidence.
+- Products and locations must be matched against active database records — never invented.
+- Action-specific location rules:
+  - RECEIVE → destinationLocation only
+  - SHIP, USE, CYCLE_COUNT, DAMAGE, LOSS → sourceLocation only
+  - TRANSFER → both sourceLocation and destinationLocation
+- Reference numbers and notes are only accepted if they appear verbatim in the transcript.
+- Clarification questions are generated for missing or low-confidence fields.
+
+## 4. Confirmation / Read-Back
+- The worker can hear the full proposal via text-to-speech before confirming.
+- The worker can correct details and re-extract.
+- The worker must explicitly confirm before a pending transaction is created.
+
+## 5. Pending Record (Staging)
+- A pending transaction is created with status PENDING.
+- The transaction stores: worker ID (createdById), timestamp (createdAt),
+  original transcript, extracted fields, and AI confidence.
+- The transaction stores the device identifier if available.
+- Idempotency is supported via clientRequestId.
+
+## 6. Physical Verification
+- When a manager requests a recount, a RECOUNT task is created for the worker.
+- The worker speaks the actual physical count, which goes through the same
+  voice → STT → AI extraction pipeline.
+- The recount task is linked to the original transaction via sourceTransactionId.
+
+## 7. Business Validation
+- Permissions: Keycloak JWT with role-based access control (worker, manager, administrator).
+- Stock availability: shipping or using more than available stock is rejected.
+- Unit of measure: each product has a unit (e.g., "unit", "kg", "litre").
+- References: referenceNumber is stored on transactions.
+- Location validation: source/destination locations must be active.
+- Product validation: products must be active.
+- Action-specific rules:
+  - RECEIVE requires a destination location.
+  - SHIP, USE, CYCLE_COUNT, DAMAGE, LOSS require a source location.
+  - TRANSFER requires both source and destination locations.
+  - Source and destination must be different.
+
+## 8. Risk & Approval Routing
+The following transactions are routed to manager review (status PENDING, awaiting approval):
+
+### 8.1 Action-based routing (existing)
+- CYCLE_COUNT, DAMAGE, LOSS → always require manager review.
+
+### 8.2 Quantity-based routing (new)
+- A transaction is flagged for review if the quantity deviates significantly
+  from the item's recent average quantity.
+- The deviation threshold is configurable (default: 50% deviation from recent average).
+- "Recent" is defined as the last N transactions (default: 10) within a time window
+  (default: 30 days).
+
+### 8.3 Repeated correction routing (new)
+- A transaction is flagged for review if the same item has been corrected
+  (i.e., a previous transaction for the same item was cancelled or recounted)
+  more than N times within a short time window.
+- The correction threshold is configurable (default: 3 corrections).
+- The time window is configurable (default: 1 hour).
+
+### 8.4 Controlled / high-value item routing (new)
+- A product flagged as `controlled = true` always requires manager review
+  for any stock-reducing action (SHIP, USE, DAMAGE, LOSS, CYCLE_COUNT).
+- The `controlled` flag is a boolean field on the Product model.
+
+### 8.5 Near-zero stock routing (new)
+- A transaction is flagged for review if it would bring the available stock
+  for an item at a location to within a "near-zero" threshold of zero.
+- The near-zero threshold is configurable (default: 5 units).
+- This applies to stock-reducing actions (SHIP, USE, DAMAGE, LOSS, CYCLE_COUNT).
+
+### 8.6 Negative stock prevention
+- A transaction that would result in negative available stock is rejected
+  (ConflictException), not routed for review.
+
+## 9. Post Update
+- Low-risk transactions (RECEIVE, SHIP, USE, TRANSFER) are posted atomically
+  after worker confirmation.
+- High-risk transactions (CYCLE_COUNT, DAMAGE, LOSS, and any flagged by
+  the rules in section 8) remain pending for manager approval.
+- After posting, reorder drafts are synced for the affected product and locations.
+- Concurrency is handled with Serializable isolation level.
+
+## 10. Low-Stock Check
+- After every posted transaction, the system checks if available stock
+  is below the safety stock level.
+- If low, a reorder draft is created or updated with a suggested quantity.
+- The suggested quantity is: max(reorderQuantity, safetyStock - available).
+- The reorder quantity must be at least the supplier's minimum order quantity.
+
+## 11. Reorder Draft / Purchase-Order Generation
+- Reorder drafts are automatically created when stock falls below safety level.
+- Managers can approve or cancel drafts.
+- Approved drafts create an expected-receiving task in the worker queue.
+- Supplier emails are queued via BullMQ/Valkey and sent via Nodemailer.
+- Email delivery status is tracked (QUEUED, SENT, FAILED).
+
+## 12. Dashboard & Audit History
+- Worker dashboard: overview, voice entry, task queue, active items, history.
+- Manager dashboard: overview, approvals, reorders, audit history, task planning.
+- Administrator dashboard: system health, user management, product/location/supplier management.
+- All transactions are stored with full audit trail (created by, approved by, timestamps).
+- CSV export is available for audit history.

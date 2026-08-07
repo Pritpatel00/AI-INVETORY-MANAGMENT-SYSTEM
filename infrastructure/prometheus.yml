@@ -1,0 +1,17 @@
+# Prometheus scrape configuration for the Nirka Inventory dev stack.
+# The API runs on the host machine (npm run api:dev), so Prometheus reaches it
+# via `host.docker.internal` (Docker Desktop). On Linux hosts, add
+# `extra_hosts: ["host.docker.internal:host-gateway"]` to the compose service.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+
+  - job_name: nirka-inventory-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:9091"]
