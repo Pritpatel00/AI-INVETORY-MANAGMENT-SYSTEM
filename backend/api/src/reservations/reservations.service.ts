@@ -64,6 +64,10 @@ const shipmentTaskInclude = {
   },
 } satisfies Prisma.InventoryTaskInclude;
 
+function formatRequestNumber(value: number): string {
+  return `REQ-${String(value).padStart(3, "0")}`;
+}
+
 @Injectable()
 export class ReservationsService {
   constructor(
@@ -97,6 +101,13 @@ export class ReservationsService {
       },
       orderBy: { createdAt: "desc" },
     });
+  }
+
+  async previewNextRequestNumber() {
+    this.assertEnabled();
+    const rows = await this.prisma.$queryRaw<Array<{ last_value: number | bigint }>>`SELECT "last_value" FROM "request_reference_counters" WHERE "id" = 1`;
+    const nextValue = Number(rows[0]?.last_value ?? 0) + 1;
+    return { requestNumber: formatRequestNumber(nextValue) };
   }
 
   async createRequest(input: CreateStockRequestDto, actor: AuthenticatedUser) {
@@ -138,6 +149,12 @@ export class ReservationsService {
           }
 
           const requestNumber = await this.nextRequestNumber(database);
+          const expectedRequestNumber = input.expectedRequestNumber?.trim().toUpperCase();
+          if (expectedRequestNumber && expectedRequestNumber !== requestNumber) {
+            throw new ConflictException(
+              `${expectedRequestNumber} was just used by another request. Refresh the number and confirm again.`,
+            );
+          }
           const referenceNumber = externalReference ?? requestNumber;
           return database.stockRequest.create({
             data: {
@@ -184,7 +201,7 @@ export class ReservationsService {
     await database.$executeRaw`UPDATE "request_reference_counters" SET "last_value" = "last_value" + 1 WHERE "id" = 1`;
     const rows = await database.$queryRaw<Array<{ last_value: number | bigint }>>`SELECT "last_value" FROM "request_reference_counters" WHERE "id" = 1`;
     const value = Number(rows[0]?.last_value ?? 1);
-    return `REQ-${String(value).padStart(3, "0")}`;
+    return formatRequestNumber(value);
   }
 
   async getAvailability(id: string) {

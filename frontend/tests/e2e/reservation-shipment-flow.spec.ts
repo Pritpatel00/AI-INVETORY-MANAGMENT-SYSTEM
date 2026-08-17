@@ -367,13 +367,15 @@ test("manager prepares a shipment through the modal with automatic worker assign
   // Create a stock request through the application form.
   const uiRequestedFor = `E2E UI Customer ${Date.now().toString(36).toUpperCase()}`;
   await page.getByRole("button", { name: "+ New stock request" }).click();
-  await expect(page.getByLabel("Order or request number is generated automatically")).toContainText("Generated automatically");
+  const requestNumberPreview = page.getByLabel(/Order or request number REQ-\d+/);
+  await expect(requestNumberPreview).toHaveText(/^REQ-\d{3,}$/);
+  const displayedRequestNumber = (await requestNumberPreview.textContent())?.trim();
   await expect(page.getByRole("textbox", { name: /Order \/ request number/i })).toHaveCount(0);
   await page.getByLabel("Requested for").fill(uiRequestedFor);
   await page.getByLabel("Item").selectOption({ label: `${fixtureProduct.name} — ${fixtureProduct.sku}` });
   await page.getByLabel("Required quantity").fill("5");
   await page.getByRole("button", { name: "Confirm request" }).click();
-  await expect(page.getByText("Stock request confirmed. It is ready for reservation.")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/Stock request REQ-\d+ confirmed\. It is ready for reservation\./)).toBeVisible({ timeout: 30_000 });
 
   // Reserve available stock (on-hand must NOT change).
   await page.locator("article").filter({ hasText: uiRequestedFor }).getByRole("button", { name: "Reserve available stock" }).click();
@@ -393,6 +395,7 @@ test("manager prepares a shipment through the modal with automatic worker assign
     }
   }
   if (!trackedReservationId || !uiReference) throw new Error("The UI-created reservation or generated REQ number could not be found.");
+  expect(uiReference).toBe(displayedRequestNumber);
 
   // Switch to the Reservations tab and open the Prepare shipment modal.
   await page.getByRole("button", { name: /^Reservations \(\d+\)$/ }).click();

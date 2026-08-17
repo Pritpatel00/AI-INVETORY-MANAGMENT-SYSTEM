@@ -127,6 +127,23 @@ describe("ReservationsService automatic request references", () => {
     }));
   });
 
+  test("previews the next real request number without consuming it", async () => {
+    const { service } = createService({
+      $queryRaw: jest.fn().mockResolvedValue([{ last_value: 12 }]),
+    });
+
+    await expect(service.previewNextRequestNumber()).resolves.toEqual({ requestNumber: "REQ-013" });
+  });
+
+  test("rejects creation if the displayed request number was used concurrently", async () => {
+    const { database, create } = requestDatabase(14);
+    const { service } = createService(database);
+
+    await expect(service.createRequest({ ...requestInput, expectedRequestNumber: "REQ-013" }, manager))
+      .rejects.toBeInstanceOf(ConflictException);
+    expect(create).not.toHaveBeenCalled();
+  });
+
   test("keeps an optional external order reference without replacing the internal REQ number", async () => {
     const { database, create } = requestDatabase(12);
     const { service } = createService(database);

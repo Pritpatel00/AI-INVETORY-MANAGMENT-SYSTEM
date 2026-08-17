@@ -17,6 +17,11 @@ export class ReservationsController {
     return this.reservations.listRequests();
   }
 
+  @Get("stock-requests/next-number")
+  nextRequestNumber() {
+    return this.reservations.previewNextRequestNumber();
+  }
+
   @Post("stock-requests")
   createRequest(@Body() input: CreateStockRequestDto, @Req() request: AuthenticatedRequest) {
     return this.reservations.createRequest(input, request.authUser!);

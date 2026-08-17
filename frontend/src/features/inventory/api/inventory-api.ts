@@ -449,11 +449,14 @@ export async function fetchInventorySnapshot(): Promise<InventorySnapshot> {
   return { products, locations, balances, transactions };
 }
 export function fetchStockRequests() { return request<ApiStockRequest[]>("/reservations/stock-requests"); }
+export function fetchNextStockRequestNumber() { return request<{ requestNumber: string }>("/reservations/stock-requests/next-number"); }
 export function fetchStockReservations() { return request<ApiStockReservation[]>("/reservations"); }
 export function createStockRequest(input: {
   requestType: string;
   /** Optional external customer reference. The backend always generates the internal REQ number. */
   referenceNumber?: string;
+  /** Read-only preview used to prevent silently changing the number during concurrent creation. */
+  expectedRequestNumber?: string;
   requestedFor: string;
   requiredDate: string;
   notes?: string;
