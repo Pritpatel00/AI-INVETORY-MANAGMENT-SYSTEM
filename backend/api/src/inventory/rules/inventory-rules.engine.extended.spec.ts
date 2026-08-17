@@ -190,9 +190,7 @@ describe("§8.4 isControlledItem", () => {
   test("returns true for a controlled product with a stock-reducing action", () => {
     const product = { id: "p1", controlled: true };
     expect(rules.isControlledItem(product, InventoryAction.SHIP)).toBe(true);
-    expect(rules.isControlledItem(product, InventoryAction.USE)).toBe(true);
     expect(rules.isControlledItem(product, InventoryAction.DAMAGE)).toBe(true);
-    expect(rules.isControlledItem(product, InventoryAction.LOSS)).toBe(true);
     expect(rules.isControlledItem(product, InventoryAction.CYCLE_COUNT)).toBe(true);
   });
 
@@ -205,9 +203,7 @@ describe("§8.4 isControlledItem", () => {
   test("returns false for a non-controlled product", () => {
     const product = { id: "p1", controlled: false };
     expect(rules.isControlledItem(product, InventoryAction.SHIP)).toBe(false);
-    expect(rules.isControlledItem(product, InventoryAction.USE)).toBe(false);
     expect(rules.isControlledItem(product, InventoryAction.DAMAGE)).toBe(false);
-    expect(rules.isControlledItem(product, InventoryAction.LOSS)).toBe(false);
     expect(rules.isControlledItem(product, InventoryAction.CYCLE_COUNT)).toBe(false);
   });
 
@@ -305,8 +301,8 @@ describe("§8.6 wouldCauseNegativeStock", () => {
 // ════════════════════════════════════════════════════════════════════
 
 describe("requiresManagerReviewExtended — combined routing", () => {
-  test("§8.1: CYCLE_COUNT, DAMAGE, LOSS always require review", () => {
-    for (const action of [InventoryAction.CYCLE_COUNT, InventoryAction.DAMAGE, InventoryAction.LOSS]) {
+  test("§8.1: CYCLE_COUNT and DAMAGE always require review", () => {
+    for (const action of [InventoryAction.CYCLE_COUNT, InventoryAction.DAMAGE]) {
       const result = rules.requiresManagerReviewExtended({
         action,
         quantity: 5,
@@ -317,8 +313,8 @@ describe("requiresManagerReviewExtended — combined routing", () => {
     }
   });
 
-  test("§8.1: RECEIVE, SHIP, USE, TRANSFER do not require review by action alone", () => {
-    for (const action of [InventoryAction.RECEIVE, InventoryAction.SHIP, InventoryAction.USE, InventoryAction.TRANSFER]) {
+  test("§8.1: RECEIVE, SHIP and TRANSFER do not require review by action alone", () => {
+    for (const action of [InventoryAction.RECEIVE, InventoryAction.SHIP, InventoryAction.TRANSFER]) {
       const result = rules.requiresManagerReviewExtended({
         action,
         quantity: 5,
@@ -345,7 +341,7 @@ describe("requiresManagerReviewExtended — combined routing", () => {
   });
 
   test("normal stock movements bypass all risk-based approval rules", () => {
-    for (const action of [InventoryAction.RECEIVE, InventoryAction.SHIP, InventoryAction.USE, InventoryAction.TRANSFER]) {
+    for (const action of [InventoryAction.RECEIVE, InventoryAction.SHIP, InventoryAction.TRANSFER]) {
       const result = rules.requiresManagerReviewExtended({
         action,
         quantity: 500,
@@ -578,9 +574,8 @@ describe("Purchase Items — evaluateReorder", () => {
     expect(rules.requiresManagerReview(InventoryAction.TRANSFER)).toBe(false);
   });
 
-  test("cycle count, damage and loss approvals still route to manager review", () => {
+  test("cycle count and damage approvals still route to manager review", () => {
     expect(rules.requiresManagerReview(InventoryAction.CYCLE_COUNT)).toBe(true);
     expect(rules.requiresManagerReview(InventoryAction.DAMAGE)).toBe(true);
-    expect(rules.requiresManagerReview(InventoryAction.LOSS)).toBe(true);
   });
 });

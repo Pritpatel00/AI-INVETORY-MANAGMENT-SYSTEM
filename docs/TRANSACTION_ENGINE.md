@@ -15,13 +15,11 @@ Creating a transaction never changes stock by itself.
 |---|---|---|
 | Receive | Destination | Adds quantity and marks the transaction `POSTED` |
 | Ship | Source | Subtracts quantity when sufficient stock exists |
-| Use | Source | Subtracts quantity when sufficient stock exists |
 | Transfer | Source and destination | Subtracts and adds in one database operation |
 | Cycle count | Counted location | Records confirmation and stays `PENDING` |
 | Damage | Source | Records confirmation and stays `PENDING` |
-| Loss | Source | Records confirmation and stays `PENDING` |
 
-Cycle counts, damage and loss are intentionally held because they can create an
+Different cycle counts and damage are intentionally held because they can create an
 inventory discrepancy. A manager can approve, reject or request a recount.
 
 ## Manager decisions
@@ -33,8 +31,8 @@ inventory discrepancy. A manager can approve, reject or request a recount.
 - A manager cannot review a risky transaction until the worker has confirmed it.
 
 For Cycle Count, the approved quantity becomes the physical balance. Approval
-is blocked when that count is below already reserved stock. For Damage and Loss,
-the approved quantity is subtracted only when enough available stock exists.
+is blocked when that count is below already reserved stock. For Damage, the
+approved quantity is subtracted only when enough available stock exists.
 
 ## Safety controls
 
@@ -54,7 +52,7 @@ the approved quantity is subtracted only when enough available stock exists.
 - Repeated confirmation was idempotent.
 - Shipping more than available stock returned `409 Conflict`.
 - Rejected shipping left the balance unchanged.
-- Ship, Use and Transfer posted successfully.
+- Ship and Transfer posted successfully.
 - Cycle Count was routed to `PENDING_REVIEW`.
 - Worker attempts to approve a manager-review transaction returned `403`.
 - Manager approval posted a confirmed cycle count.

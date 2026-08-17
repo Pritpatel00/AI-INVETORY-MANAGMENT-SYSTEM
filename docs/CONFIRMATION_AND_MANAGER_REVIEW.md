@@ -19,14 +19,14 @@ linked voice evidence.
 
 | Action | Worker-confirmation outcome |
 |---|---|
-| Receive, Ship, Use, Transfer | Valid movement is posted atomically |
-| Cycle Count, Damage, Loss | Remains pending for manager review |
+| Receive, Ship, Transfer | Valid movement is posted atomically |
+| Different Cycle Count, Damage | Remains pending for manager review |
 
 Creating the pending record alone never changes stock.
 
 ## Manager flow
 
-The manager dashboard shows only worker-confirmed Cycle Count, Damage and Loss
+The manager dashboard shows only worker-confirmed Cycle Count and Damage
 transactions.
 
 - **Approve and post:** validates the current balance and posts the adjustment.

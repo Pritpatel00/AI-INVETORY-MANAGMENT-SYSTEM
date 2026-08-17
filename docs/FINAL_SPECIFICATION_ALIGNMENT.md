@@ -10,8 +10,8 @@ working application.
 - browser voice recording and local speech-to-text;
 - AI extraction with one-question clarification;
 - worker read-back, correction and confirmation;
-- safe stock receiving, shipping, usage and transfers;
-- manager approval for cycle count, damage and loss;
+- safe stock receiving, shipping and transfers;
+- manager approval for different cycle counts and damage;
 - recount requests and unchanged-stock protection;
 - low-stock checks and purchase-order drafts;
 - supplier email approval and delivery testing;

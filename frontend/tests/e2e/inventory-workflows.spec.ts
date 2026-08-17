@@ -622,28 +622,42 @@ test.describe.serial("complete inventory workflows", () => {
     expect(caseRecord?.status).toBe("CLOSED");
   });
 
-  test("Damage and Loss require manager approval before stock changes", async () => {
-    for (const action of ["DAMAGE", "LOSS"]) {
-      const before = await quantityAt(source!.id);
-      const result = await createAndConfirm({
-        action,
-        quantity: action === "DAMAGE" ? 3 : 2,
-        sourceLocationId: source!.id,
-      });
-      expect(result.outcome).toBe("PENDING_REVIEW");
-      expect(await quantityAt(source!.id)).toBe(before);
-      const approved = await apiRequest<{ outcome: string }>(
-        managerToken,
-        `/inventory/transactions/${result.transaction.id}/approve`,
-        {
+  test("Damage requires manager approval before stock changes", async () => {
+    const before = await quantityAt(source!.id);
+    const result = await createAndConfirm({
+      action: "DAMAGE",
+      quantity: 3,
+      sourceLocationId: source!.id,
+    });
+    expect(result.outcome).toBe("PENDING_REVIEW");
+    expect(await quantityAt(source!.id)).toBe(before);
+    const approved = await apiRequest<{ outcome: string }>(
+      managerToken,
+      `/inventory/transactions/${result.transaction.id}/approve`,
+      {
+        method: "POST",
+        body: JSON.stringify({ note: "Automated DAMAGE approval." }),
+      },
+    );
+    expect(approved.outcome).toBe("POSTED");
+    expect(await quantityAt(source!.id)).toBe(before - 3);
+  });
+
+  test("removed Use stock and Loss actions are rejected", async () => {
+    for (const action of ["USE", "LOSS"]) {
+      await expect(
+        apiRequest(workerToken, "/inventory/transactions", {
           method: "POST",
-          body: JSON.stringify({ note: `Automated ${action} approval.` }),
-        },
-      );
-      expect(approved.outcome).toBe("POSTED");
-      expect(await quantityAt(source!.id)).toBe(
-        before - (action === "DAMAGE" ? 3 : 2),
-      );
+          body: JSON.stringify({
+            action,
+            productId: product!.id,
+            quantity: 1,
+            sourceLocationId: source!.id,
+            condition: "GOOD",
+            clientRequestId: `e2e-removed-${runId}-${action}`,
+          }),
+        }),
+      ).rejects.toThrow(/have been removed/i);
     }
   });
 
@@ -723,7 +737,6 @@ test.describe.serial("complete inventory workflows", () => {
       "TRANSFER",
       "CYCLE_COUNT",
       "DAMAGE",
-      "LOSS",
     ]) {
       expect(fixtureActions.has(action), `${action} audit record`).toBe(true);
     }

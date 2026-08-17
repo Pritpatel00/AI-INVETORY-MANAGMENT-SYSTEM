@@ -18,11 +18,9 @@ import { LocationResolverService } from "../inventory/location-resolver.service"
 const actionValues = [
   "RECEIVE",
   "SHIP",
-  "USE",
   "TRANSFER",
   "CYCLE_COUNT",
   "DAMAGE",
-  "LOSS",
   "UNKNOWN",
 ] as const;
 const conditionValues = ["GOOD", "DAMAGED", "HOLD", "UNKNOWN"] as const;
@@ -190,17 +188,15 @@ export class AiService {
       "Action rules:",
       "- received/incoming/delivered/put at/added to/put in => RECEIVE",
       "- shipped/dispatched => SHIP",
-      "- used/consumed/taken for internal work => USE",
       "- moved/transferred from one location to another => TRANSFER",
       "- counted/physical count => CYCLE_COUNT",
       "- damaged/broken => DAMAGE",
-      "- lost/missing => LOSS",
       "For RECEIVE, the spoken location is destinationLocationCode.",
-      "For SHIP, USE, CYCLE_COUNT, DAMAGE and LOSS, it is sourceLocationCode.",
+      "For SHIP, CYCLE_COUNT and DAMAGE, it is sourceLocationCode.",
       "For TRANSFER, capture both source and destination.",
       "For RECEIVE, the worker must say the actual destination location. If it is missing, leave destinationLocationCode empty so the system asks for it.",
-      "For CYCLE_COUNT, DAMAGE and LOSS, if the worker does not say a location, leave sourceLocationCode empty — the backend will use the worker's assigned zone.",
-      "For SHIP and USE, if the worker does not say a location, the backend will check the worker's zone for stock — leave sourceLocationCode empty.",
+      "For CYCLE_COUNT and DAMAGE, if the worker does not say a location, leave sourceLocationCode empty — the backend will use the worker's assigned zone.",
+      "For SHIP, if the worker does not say a location, the backend will check the worker's zone for stock — leave sourceLocationCode empty.",
       "A supplier or order number belongs in referenceNumber.",
       "Return only data matching the supplied JSON schema.",
       `Products: ${JSON.stringify(products.map(({ sku, name, unit }) => ({ sku, name, unit })))}`,
@@ -332,10 +328,10 @@ export class AiService {
     let sourceLocation = action === InventoryAction.RECEIVE ? null : matchedSourceLocation;
     const destinationLocation = action === InventoryAction.RECEIVE || action === InventoryAction.TRANSFER ? matchedDestinationLocation : null;
 
-    // Auto-resolve: Cycle count, Damage, Loss without spoken source → use worker zone.
+    // Auto-resolve: Cycle count or Damage without spoken source → use worker zone.
     if (
       action != null &&
-      (action === InventoryAction.CYCLE_COUNT || action === InventoryAction.DAMAGE || action === InventoryAction.LOSS) &&
+      (action === InventoryAction.CYCLE_COUNT || action === InventoryAction.DAMAGE) &&
       !sourceLocation
     ) {
       const zone = await this.locationResolver.resolveWorkerZone(user.id);
@@ -345,10 +341,10 @@ export class AiService {
       }
     }
 
-    // Auto-resolve: Ship/Use without spoken source → use worker zone if stock available.
+    // Auto-resolve: Ship without spoken source → use worker zone if stock is available.
     if (
       action != null &&
-      (action === InventoryAction.SHIP || action === InventoryAction.USE) &&
+      action === InventoryAction.SHIP &&
       !sourceLocation &&
       product
     ) {
@@ -460,7 +456,6 @@ export class AiService {
           [
             InventoryAction.CYCLE_COUNT,
             InventoryAction.DAMAGE,
-            InventoryAction.LOSS,
           ] as InventoryAction[]
         ).includes(action),
       confidence: Number(confidence.toFixed(3)),
@@ -791,10 +786,8 @@ export class AiService {
       [InventoryAction.TRANSFER, /\b(?:transfer|transferred|move|moved)\b/],
       [InventoryAction.RECEIVE, /\b(?:receive|received|incoming|delivered|put|placed|add|added)\b/],
       [InventoryAction.SHIP, /\b(?:ship|shipped|dispatch|dispatched)\b/],
-      [InventoryAction.USE, /\b(?:use|used|consume|consumed|taking out)\b/],
       [InventoryAction.CYCLE_COUNT, /\b(?:count|counted|cycle count)\b/],
       [InventoryAction.DAMAGE, /\b(?:damage|damaged|broken)\b/],
-      [InventoryAction.LOSS, /\b(?:lost|loss|missing)\b/],
     ];
     return rules.find(([, pattern]) => pattern.test(spoken))?.[0] ?? null;
   }
@@ -830,7 +823,6 @@ export class AiService {
         InventoryAction.SHIP,
         ["ship", "shipped", "dispatch", "dispatched"],
       ],
-      [InventoryAction.USE, ["use", "used", "consume", "consumed"]],
       [
         InventoryAction.TRANSFER,
         ["transfer", "transferred", "move", "moved"],
@@ -847,7 +839,6 @@ export class AiService {
         ],
       ],
       [InventoryAction.DAMAGE, ["damage", "damaged", "broken"]],
-      [InventoryAction.LOSS, ["loss", "lost", "missing"]],
     ];
 
     for (const [action, actionAliases] of aliases) {

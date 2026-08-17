@@ -221,11 +221,9 @@ export interface InventoryExtraction {
     action:
       | "RECEIVE"
       | "SHIP"
-      | "USE"
       | "TRANSFER"
       | "CYCLE_COUNT"
       | "DAMAGE"
-      | "LOSS"
       | null;
     product: ApiProduct | null;
     quantity: number | null;

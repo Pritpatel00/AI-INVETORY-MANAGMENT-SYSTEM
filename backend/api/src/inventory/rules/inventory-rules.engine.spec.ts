@@ -25,11 +25,23 @@ test("requires the correct locations for each action", () => {
 test("routes controlled adjustments to manager review", () => {
   assert.equal(rules.requiresManagerReview(InventoryAction.CYCLE_COUNT), true);
   assert.equal(rules.requiresManagerReview(InventoryAction.DAMAGE), true);
-  assert.equal(rules.requiresManagerReview(InventoryAction.LOSS), true);
   assert.equal(rules.requiresManagerReview(InventoryAction.RECEIVE), false);
   assert.equal(rules.requiresManagerReview(InventoryAction.SHIP), false);
-  assert.equal(rules.requiresManagerReview(InventoryAction.USE), false);
   assert.equal(rules.requiresManagerReview(InventoryAction.TRANSFER), false);
+});
+
+test("rejects removed Use stock and Loss actions", () => {
+  for (const action of [InventoryAction.USE, InventoryAction.LOSS]) {
+    assert.throws(
+      () =>
+        rules.validateTransaction({
+          action,
+          quantity: 1,
+          sourceLocationId: "A",
+        }),
+      /have been removed/i,
+    );
+  }
 });
 
 test("prevents negative available stock", () => {

@@ -2,6 +2,7 @@ import { InventoryAction, StockCondition } from "@prisma/client";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import {
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -10,9 +11,20 @@ import {
   Min,
 } from "class-validator";
 
+export const ACTIVE_INVENTORY_ACTIONS: InventoryAction[] = [
+  InventoryAction.RECEIVE,
+  InventoryAction.SHIP,
+  InventoryAction.TRANSFER,
+  InventoryAction.CYCLE_COUNT,
+  InventoryAction.DAMAGE,
+];
+
 export class CreateTransactionDto {
-  @ApiProperty({ enum: InventoryAction, example: InventoryAction.RECEIVE })
-  @IsEnum(InventoryAction)
+  @ApiProperty({ enum: ACTIVE_INVENTORY_ACTIONS, example: InventoryAction.RECEIVE })
+  @IsIn(ACTIVE_INVENTORY_ACTIONS, {
+    message:
+      "Use stock and Loss actions have been removed. Use Ship for outgoing stock or Damage for unusable stock.",
+  })
   action: InventoryAction;
 
   @ApiProperty({ example: "b6abf8ce-a21f-43a0-83ef-3fd546cf95a4" })

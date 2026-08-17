@@ -7,10 +7,10 @@ import type { InventorySnapshot } from "../api/inventory-api";
 
 export type ExecutiveVoiceWorkflow =
   | "RECEIVE"
-  | "SHIP_USE"
+  | "SHIP"
   | "TRANSFER"
   | "CYCLE_COUNT"
-  | "DAMAGE_LOSS";
+  | "DAMAGE";
 
 interface ExecutiveHomeProps {
   workerName: string;
@@ -120,9 +120,9 @@ export function ExecutiveHome({
           />
           <QuickActionButton
             icon={PackageMinus}
-            label="Ship / Use"
+            label="Ship"
             gradient="from-[#d47b08] to-[#f0a13a]"
-            onClick={() => onStartVoiceWorkflow("SHIP_USE")}
+            onClick={() => onStartVoiceWorkflow("SHIP")}
           />
           <QuickActionButton
             icon={ArrowUpDown}
@@ -138,9 +138,9 @@ export function ExecutiveHome({
           />
           <QuickActionButton
             icon={AlertTriangle}
-            label="Damage / Loss"
+            label="Damage"
             gradient="from-[#be185d] to-[#ec4899]"
-            onClick={() => onStartVoiceWorkflow("DAMAGE_LOSS")}
+            onClick={() => onStartVoiceWorkflow("DAMAGE")}
           />
         </div>
       </section>

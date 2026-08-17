@@ -7,9 +7,9 @@ Browser-level end-to-end tests for the critical user flows (M10).
 | Spec | Flow |
 | --- | --- |
 | `manager-approval-flow.spec.ts` | Worker proposal → confirmed → routed to manager review → **manager signs in through Keycloak, approves it in the UI, and the audit ledger records the posted transaction with the manager as reviewer**. Also asserts a worker token cannot approve (Stage 8 role guard). |
-| `inventory-workflows.spec.ts` | Isolated real-API checks for Receive, Ship, Transfer, matching and differing Cycle Count, Damage, Loss, recount-task creation, low-stock Purchase Items, audit history and role permissions. Test stock is reset and the temporary product is archived afterward. |
+| `inventory-workflows.spec.ts` | Isolated real-API checks for Receive, Ship, Transfer, matching and differing Cycle Count, Damage, removed-action rejection, recount-task creation, low-stock Purchase Items, audit history and role permissions. Test stock is reset and the temporary product is archived afterward. |
 | `discrepancy-management.spec.ts` | Worker difference → discrepancy → manager recount request → worker recount → manager resolution, evidence, reports and mobile accessibility. |
-| `voice-capture-flow.spec.ts` | Real-audio browser scenarios covering Receive with a spoken destination, missing Receive destination clarification, Ship, Use, Transfer, exact and different Cycle Counts, Damage, Loss, and one-question voice clarification. It verifies automatic posting versus manager review through the live speech, AI, API and database stack. |
+| `voice-capture-flow.spec.ts` | Real-audio browser scenarios covering Receive with a spoken destination, missing Receive destination clarification, Ship, Transfer, exact and different Cycle Counts, Damage, and one-question voice clarification. It verifies automatic posting versus manager review through the live speech, AI, API and database stack. |
 
 Test records are created through the inventory API in `beforeAll` where that
 keeps setup reliable, while user decisions and visible results are verified in
@@ -92,7 +92,7 @@ created. Cleanup restores the original balance after the test.
   local speech and Ollama services. It generates slower WAV statements at
   runtime and restores affected inventory balances after every scenario.
 - A quick action is trusted workflow context. AI extracts the spoken details,
-  while the selected Receive, Ship/Use, Transfer, Cycle Count, or Damage/Loss
+  while the selected Receive, Ship, Transfer, Cycle Count, or Damage
   workflow prevents a noisy transcript from changing the intended process.
 - Uses the locally installed Chrome (`channel: "chrome"`). On a machine
   without Chrome, remove `channel` and run `npx playwright install chromium`.

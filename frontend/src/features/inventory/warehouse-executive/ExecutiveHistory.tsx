@@ -39,7 +39,7 @@ export function ExecutiveHistory({
           <p className="text-[10px] font-extrabold uppercase tracking-[0.15em] text-[#155eef]">Transaction history</p>
           <h2 className="mt-1 text-xl font-extrabold text-[#102a56]">Your inventory updates</h2>
           <p className="mt-1 text-xs font-semibold text-[#7b8fa9]">
-            {view === "PENDING" ? "Cycle counts, damage or loss updates waiting for review, plus offline updates waiting to sync." : "Posted, approved, and completed updates."}
+            {view === "PENDING" ? "Cycle counts and damage updates waiting for review, plus offline updates waiting to sync." : "Posted, approved, and completed updates."}
           </p>
         </div>
         <div className="flex items-center gap-2">

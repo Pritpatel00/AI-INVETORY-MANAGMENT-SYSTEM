@@ -36,17 +36,14 @@ const sampleItems = [
 const actions = [
   InventoryAction.RECEIVE,
   InventoryAction.SHIP,
-  InventoryAction.USE,
   InventoryAction.TRANSFER,
   InventoryAction.CYCLE_COUNT,
   InventoryAction.DAMAGE,
-  InventoryAction.LOSS,
 ] as const;
 
 const reviewActions = new Set<InventoryAction>([
   InventoryAction.CYCLE_COUNT,
   InventoryAction.DAMAGE,
-  InventoryAction.LOSS,
 ]);
 
 function sampleDate(index: number) {
@@ -68,11 +65,10 @@ function statusFor(action: InventoryAction, index: number) {
 function transcriptFor(action: InventoryAction, quantity: number, item: string, from: string, to?: string) {
   if (action === InventoryAction.RECEIVE) return `I received ${quantity} ${item} in ${from}.`;
   if (action === InventoryAction.SHIP) return `I shipped ${quantity} ${item} from ${from}.`;
-  if (action === InventoryAction.USE) return `I used ${quantity} ${item} from ${from}.`;
   if (action === InventoryAction.TRANSFER) return `I moved ${quantity} ${item} from ${from} to ${to}.`;
   if (action === InventoryAction.CYCLE_COUNT) return `I counted ${quantity} ${item} in ${from}.`;
   if (action === InventoryAction.DAMAGE) return `I found ${quantity} damaged ${item} in ${from}.`;
-  return `I found ${quantity} missing ${item} from ${from}.`;
+  return `I found ${quantity} damaged ${item} in ${from}.`;
 }
 
 async function ensureBalance(productId: string, locationId: string, openingQuantity = 0) {
@@ -97,7 +93,7 @@ async function applyPostedMovement(input: {
     });
     return;
   }
-  if ([InventoryAction.SHIP, InventoryAction.USE, InventoryAction.DAMAGE, InventoryAction.LOSS].includes(input.action)) {
+  if ([InventoryAction.SHIP, InventoryAction.DAMAGE].includes(input.action)) {
     await prisma.inventoryBalance.update({
       where: { productId_locationId: { productId: input.productId, locationId: input.sourceLocationId! } },
       data: { quantity: { decrement: input.quantity } },

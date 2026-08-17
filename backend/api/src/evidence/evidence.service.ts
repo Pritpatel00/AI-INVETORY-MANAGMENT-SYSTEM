@@ -36,7 +36,7 @@ const DECIDABLE_STATUSES: DiscrepancyStatus[] = [
   DiscrepancyStatus.RECOUNT_REQUESTED,
 ];
 
-const TRANSACTION_ACTIONS_WITH_PHOTO = new Set(["DAMAGE", "LOSS", "RECEIVE"]);
+const TRANSACTION_ACTIONS_WITH_PHOTO = new Set(["DAMAGE", "RECEIVE"]);
 const TRANSACTION_STATUSES_ACCEPTING_PHOTO = new Set([
   "PENDING",
   "RECOUNT_REQUESTED",
@@ -142,7 +142,7 @@ export class EvidenceService {
   }
 
   /**
-   * Upload a photo for a worker action (Damage, Loss or receiving-condition
+   * Upload a photo for a worker action (Damage or receiving-condition
    * problem) before or after manager review. Only the transaction creator or
    * a manager may upload.
    */
@@ -166,7 +166,7 @@ export class EvidenceService {
     }
     if (!TRANSACTION_ACTIONS_WITH_PHOTO.has(transaction.action)) {
       throw new BadRequestException(
-        "Photo evidence is only accepted for Damage, Loss and receiving-condition transactions.",
+        "Photo evidence is only accepted for Damage and receiving-condition transactions.",
       );
     }
     if (!TRANSACTION_STATUSES_ACCEPTING_PHOTO.has(transaction.status)) {

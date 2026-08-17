@@ -18,17 +18,15 @@ Speak  ->  1. Transcription   ->  2. AI extraction   ->  3. Clarification (if ne
 
 The worker speaks one clear inventory sentence. The AI maps the spoken intent
 to exactly one controlled action. Safe actions post immediately after worker
-confirmation; **cycle count, damage and loss always require manager review**.
+confirmation; **different cycle counts and damage require manager review**.
 
 | Say something like | Controlled action | Location the system requires | Manager review |
 |---|---|---|---|
 | “I received 50 Blue Widgets and put them at Shelf B.” or “I received 50 Blue Widgets and added them to Shelf B.” | `RECEIVE` | Destination | No |
 | “I shipped 5 Blue Widgets from Shelf B.” | `SHIP` | Source | No |
-| “We used 3 units of Item 402 from Shelf B.” | `USE` | Source | No |
 | “I moved 10 Blue Widgets from Shelf B to Shelf C.” | `TRANSFER` | Source **and** destination | No |
 | “I counted 50 Blue Widgets on Shelf B.” | `CYCLE_COUNT` | Source | **Yes** |
 | “5 units of Item 402 are damaged at Shelf B.” | `DAMAGE` | Source | **Yes** |
-| “10 units of Item 402 are missing from Shelf B.” | `LOSS` | Source | **Yes** |
 
 Recognized intent keywords (see `backend/api/src/ai/ai.service.ts`):
 
@@ -37,10 +35,8 @@ Recognized intent keywords (see `backend/api/src/ai/ai.service.ts`):
 | `TRANSFER` | transfer, transferred, move, moved |
 | `RECEIVE` | receive, received, incoming, delivered, put, placed, add, added |
 | `SHIP` | ship, shipped, dispatch, dispatched |
-| `USE` | use, used, consume, consumed, taking out |
 | `CYCLE_COUNT` | count, counted, cycle count |
 | `DAMAGE` | damage, damaged, broken |
-| `LOSS` | lost, loss, missing |
 
 **Task voice entry:** when a task is loaded (e.g. “Receive Blue Widgets”),
 the task already provides the action, item and location. The worker says only
@@ -117,12 +113,12 @@ system answers with a complete structured proposal:
 | Field | Type | Meaning |
 |---|---|---|
 | `readyForConfirmation` | boolean | `true` when no fields are missing or low-confidence |
-| `requiresManagerReview` | boolean | `true` for `CYCLE_COUNT`, `DAMAGE`, `LOSS` |
+| `requiresManagerReview` | boolean | `true` for a different `CYCLE_COUNT` or `DAMAGE` |
 | `confidence` | number 0–1 | Average confidence of the required fields for the action |
 | `missingFields` | string[] | Fields the AI could not determine (`action`, `product`, `quantity`, `sourceLocation`, `destinationLocation`) |
 | `lowConfidenceFields` | string[] | Fields below the 0.5 confidence threshold |
 | `clarificationQuestions` | string[] | One spoken question per missing/low field |
-| `fields.action` | string or `null` | `RECEIVE` \| `SHIP` \| `USE` \| `TRANSFER` \| `CYCLE_COUNT` \| `DAMAGE` \| `LOSS` |
+| `fields.action` | string or `null` | `RECEIVE` \| `SHIP` \| `TRANSFER` \| `CYCLE_COUNT` \| `DAMAGE` |
 | `fields.product` | object or `null` | Matched active product (must be grounded in the transcript) |
 | `fields.quantity` | int or `null` | Number of units; `null` when not explicitly spoken |
 | `fields.sourceLocation` | object or `null` | Required for everything except `RECEIVE`; cleared for `RECEIVE` |
@@ -177,8 +173,7 @@ The system answers this merge with the **same extraction JSON** as in section 3
 
 An unrelated or ambiguous answer is not accepted; the same question is spoken
 and displayed again, e.g. “I heard ‘pizza’, but could not match it
-confidently. Please say Receive, Ship, Use, Transfer, Cycle count, Damage, or
-Loss.”
+confidently. Please say Receive, Ship, Transfer, Cycle count, or Damage.”
 
 ## 5. Response format — confirmation outcome
 
@@ -208,7 +203,7 @@ transaction → `POST /api/inventory/transactions/:id/confirm` answers:
 | Outcome | Meaning |
 |---|---|
 | `POSTED` | Stock moved. Safe actions post immediately after worker confirmation. |
-| `PENDING_REVIEW` | No stock changed; transaction waits for a manager decision (cycle count, damage, loss). |
+| `PENDING_REVIEW` | No stock changed; transaction waits for a manager decision (different cycle count or damage). |
 
 When the manager reviews, `POST /api/inventory/transactions/:id/approve|reject|request-recount`
 answers with the same shape but `outcome` is one of `POSTED`, `REJECTED`, or

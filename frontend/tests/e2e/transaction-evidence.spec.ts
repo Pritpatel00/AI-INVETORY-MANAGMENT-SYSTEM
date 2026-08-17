@@ -6,7 +6,7 @@ import { join } from "node:path";
 /**
  * Manager visibility of worker-uploaded photo evidence e2e.
  *
- *  1. A worker creates Damage/Loss/Receive transactions and uploads photos.
+ *  1. A worker creates Damage/Receive transactions and uploads photos.
  *  2. The manager sees a "Photo evidence" badge (with count) in both the
  *     "Needs review" tab and the "History" (audit) tab.
  *  3. Opening a transaction shows thumbnails; clicking a thumbnail opens a

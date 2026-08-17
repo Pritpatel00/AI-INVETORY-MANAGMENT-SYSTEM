@@ -49,7 +49,7 @@ export class LocationResolverService {
   }
 
   /**
-   * Resolve a shipping source location for SHIP/USE actions.
+   * Resolve a shipping source location for SHIP actions.
    * First tries the worker's assigned zone, then only uses it if the
    * product actually has stock at that location.
    */

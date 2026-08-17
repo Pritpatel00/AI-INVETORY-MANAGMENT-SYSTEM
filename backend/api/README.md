@@ -48,8 +48,8 @@ The API is available at `http://localhost:4000/api`.
 - Extract controlled inventory details: `POST /api/ai/extract-inventory`
 
 Worker confirmation creates a pending inventory transaction. Receiving,
-shipping, usage and transfers are posted atomically after confirmation. Cycle
-counts, damage and loss remain pending for manager review. Authentication and
+shipping and transfers are posted atomically after confirmation. Different
+cycle counts and damage remain pending for manager review. Authentication and
 role enforcement are active.
 
 The speech endpoint accepts a signed-in worker's multipart audio upload, sends

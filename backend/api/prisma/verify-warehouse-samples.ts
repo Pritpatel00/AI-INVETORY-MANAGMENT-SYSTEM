@@ -15,7 +15,7 @@ async function main() {
       where: {
         ...transactionFilter,
         status: TransactionStatus.PENDING,
-        action: { in: [InventoryAction.RECEIVE, InventoryAction.SHIP, InventoryAction.USE, InventoryAction.TRANSFER] },
+        action: { in: [InventoryAction.RECEIVE, InventoryAction.SHIP, InventoryAction.TRANSFER] },
       },
     }),
   ]);

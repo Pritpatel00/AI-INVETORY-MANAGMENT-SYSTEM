@@ -96,7 +96,7 @@ export function AdministratorAuditTransactions({
           </label>
           <select aria-label="Filter administrator audit action" value={action} onChange={(event) => setAction(event.target.value)} className="h-10 rounded-xl border border-[#d5e1f0] bg-white px-3 text-xs font-bold text-[#496482]">
             <option value="ALL">All actions</option>
-            {["RECEIVE", "SHIP", "USE", "TRANSFER", "CYCLE_COUNT", "DAMAGE", "LOSS"].map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}
+            {["RECEIVE", "SHIP", "TRANSFER", "CYCLE_COUNT", "DAMAGE"].map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}
           </select>
           <select aria-label="Filter administrator audit status" value={status} onChange={(event) => setStatus(event.target.value)} className="h-10 rounded-xl border border-[#d5e1f0] bg-white px-3 text-xs font-bold text-[#496482]">
             <option value="ALL">All statuses</option>

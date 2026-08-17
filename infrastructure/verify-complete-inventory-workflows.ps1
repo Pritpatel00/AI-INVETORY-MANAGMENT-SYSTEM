@@ -112,16 +112,13 @@ try {
     $ship = New-And-Confirm -name "ship" -action "SHIP" -quantity 2 -sourceId $shelfId -destinationId $null
     $checks.shipDecreased = (Get-Quantity $workerHeaders "ITEM-402" "SHELF-B") -eq ($initialShelf + 6)
 
-    $use = New-And-Confirm -name "use" -action "USE" -quantity 1 -sourceId $shelfId -destinationId $null
-    $checks.useDecreased = (Get-Quantity $workerHeaders "ITEM-402" "SHELF-B") -eq ($initialShelf + 5)
-
     $transferOut = New-And-Confirm -name "transfer-out" -action "TRANSFER" -quantity 3 -sourceId $shelfId -destinationId $receivingId
     $checks.transferMovedStock =
-        (Get-Quantity $workerHeaders "ITEM-402" "SHELF-B") -eq ($initialShelf + 2) -and
+        (Get-Quantity $workerHeaders "ITEM-402" "SHELF-B") -eq ($initialShelf + 3) -and
         (Get-Quantity $workerHeaders "ITEM-402" "RECEIVING") -eq ($initialReceiving + 3)
     $transferBack = New-And-Confirm -name "transfer-back" -action "TRANSFER" -quantity 3 -sourceId $receivingId -destinationId $shelfId
     $checks.transferRestoredLocations =
-        (Get-Quantity $workerHeaders "ITEM-402" "SHELF-B") -eq ($initialShelf + 5) -and
+        (Get-Quantity $workerHeaders "ITEM-402" "SHELF-B") -eq ($initialShelf + 6) -and
         (Get-Quantity $workerHeaders "ITEM-402" "RECEIVING") -eq $initialReceiving
 
     $beforeCount = Get-Quantity $workerHeaders "ITEM-402" "SHELF-B"
@@ -139,10 +136,6 @@ try {
     $damage = New-And-Confirm -name "damage" -action "DAMAGE" -quantity 1 -sourceId $shelfId -destinationId $null
     $damageApproval = Invoke-ApiPost "/inventory/transactions/$($damage.transaction.id)/approve" $managerHeaders @{ note = "Approved automated damaged-stock test." }
     $checks.damageApproved = $damage.confirmation.outcome -eq "PENDING_REVIEW" -and $damageApproval.outcome -eq "POSTED"
-
-    $loss = New-And-Confirm -name "loss" -action "LOSS" -quantity 1 -sourceId $shelfId -destinationId $null
-    $lossApproval = Invoke-ApiPost "/inventory/transactions/$($loss.transaction.id)/approve" $managerHeaders @{ note = "Approved automated lost-stock test." }
-    $checks.lossApproved = $loss.confirmation.outcome -eq "PENDING_REVIEW" -and $lossApproval.outcome -eq "POSTED"
 
     $restoreAmount = (Get-Quantity $workerHeaders "ITEM-402" "SHELF-B") - $initialShelf
     if ($restoreAmount -gt 0) {

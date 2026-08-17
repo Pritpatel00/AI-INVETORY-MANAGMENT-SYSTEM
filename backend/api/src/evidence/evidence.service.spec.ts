@@ -215,7 +215,7 @@ describe("EvidenceService — discrepancy photo upload", () => {
   });
 });
 
-describe("EvidenceService — worker transaction photo (Damage/Loss/Receive)", () => {
+describe("EvidenceService — worker transaction photo (Damage/Receive)", () => {
   test("allows the transaction creator to attach a photo", async () => {
     const { prisma, service, openTransaction } = createPrismaMock();
     openTransaction();

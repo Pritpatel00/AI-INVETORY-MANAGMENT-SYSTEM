@@ -74,7 +74,7 @@ Delivered:
 2. Added atomic receiving stock updates.
 3. Added safe shipping and internal-usage stock updates.
 4. Added atomic transfers between warehouse locations.
-5. Routed cycle count, damage and loss to manager review.
+5. Routed different cycle counts and damage to manager review.
 6. Added duplicate-request and repeated-confirmation protection.
 7. Added negative available-stock prevention.
 8. Added transaction ownership from the authenticated Keycloak user.
@@ -162,11 +162,11 @@ Completed:
 2. Added worker Confirm, Correct and Cancel controls.
 3. Connected complete AI proposals to pending PostgreSQL transactions.
 4. Linked reviewed transcripts and voice evidence to the audit transaction.
-5. Kept Cycle Count, Damage and Loss pending after worker confirmation.
+5. Kept different Cycle Counts and Damage pending after worker confirmation.
 6. Added a live manager approval queue.
 7. Added Approve, Reject and Request Recount decisions.
 8. Added manager-only API authorization for all review decisions.
-9. Added atomic stock posting for approved cycle-count, damage and loss actions.
+9. Added atomic stock posting for approved cycle-count and damage actions.
 10. Added automated role, status and unchanged-stock safety verification.
 
 Visible result:

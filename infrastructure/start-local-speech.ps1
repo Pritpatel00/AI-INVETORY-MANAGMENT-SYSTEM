@@ -37,7 +37,7 @@ $env:WHISPER_DEVICE = "cpu"
 $env:WHISPER_COMPUTE_TYPE = "int8"
 $env:WHISPER_MODEL_CACHE = Join-Path $projectRoot ".local\whisper-models"
 $env:WHISPER_BEAM_SIZE = "3"
-$env:WHISPER_INITIAL_PROMPT = "Warehouse inventory. Actions: receive, ship, use, transfer, cycle count, damage, loss. Items: cable, helmet, gloves, tape, box, bottle, bolt, bearing. Locations: receiving, dispatch, packing, storage one, storage two, storage three."
+$env:WHISPER_INITIAL_PROMPT = "Warehouse inventory. Actions: receive, ship, transfer, cycle count, damage. Items: cable, helmet, gloves, tape, box, bottle, bolt, bearing. Locations: receiving, dispatch, packing, storage one, storage two, storage three."
 
 $speechProcess = Start-Process `
     -FilePath $python `

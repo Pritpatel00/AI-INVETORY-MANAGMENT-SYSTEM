@@ -42,7 +42,7 @@ const transactionInclude = {
   createdBy: true,
   approvedBy: true,
   // Managers show a photo-evidence badge with the number of photos attached
-  // to each transaction (worker uploads for Damage/Loss/Receive).
+  // to each transaction (worker uploads for Damage/Receive).
   _count: { select: { evidence: true } },
   // The shipment task a transaction was created from (one-to-one via the
   // task's sourceTransactionId) so the confirmation router can apply the
@@ -693,9 +693,9 @@ export class InventoryService {
       return this.reservations.confirmShipmentTransaction(id, actor);
     }
 
-    // Only Cycle Count, Damage and Loss can require manager review. The
-    // extended evaluator adds risk reasons to those actions; it does not
-    // escalate a normal Receive, Ship, Use or Transfer movement.
+    // Only Cycle Count and Damage can require manager review. The extended
+    // evaluator adds risk reasons to those actions; it does not escalate a
+    // normal Receive, Ship or Transfer movement.
     const extendedReview = await this.evaluateManagerReview(transaction);
     if (
       this.rules.requiresManagerReview(transaction.action) ||

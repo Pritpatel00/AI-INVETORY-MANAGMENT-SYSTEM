@@ -48,7 +48,7 @@ def transcribe_file(file_path: str, language: str | None = None) -> dict[str, An
         beam_size = 1
     initial_prompt = os.getenv(
         "WHISPER_INITIAL_PROMPT",
-        "Warehouse inventory. Actions: receive, ship, use, transfer, cycle count, damage, loss. Items: cable, helmet, gloves, tape, box, bottle, bolt, bearing. Locations: receiving, dispatch, packing, storage one, storage two, storage three.",
+        "Warehouse inventory. Actions: receive, ship, transfer, cycle count, damage. Items: cable, helmet, gloves, tape, box, bottle, bolt, bearing. Locations: receiving, dispatch, packing, storage one, storage two, storage three.",
     ).strip()
     segments_iterator, information = get_model().transcribe(
         file_path,

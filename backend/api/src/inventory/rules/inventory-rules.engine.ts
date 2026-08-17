@@ -87,9 +87,7 @@ export interface ManagerReviewResult {
  */
 const STOCK_REDUCING_ACTIONS = new Set<InventoryAction>([
   InventoryAction.SHIP,
-  InventoryAction.USE,
   InventoryAction.DAMAGE,
-  InventoryAction.LOSS,
   InventoryAction.CYCLE_COUNT,
 ]);
 
@@ -98,22 +96,28 @@ export class InventoryRulesEngine {
   private readonly reviewActions = new Set<InventoryAction>([
     InventoryAction.CYCLE_COUNT,
     InventoryAction.DAMAGE,
-    InventoryAction.LOSS,
   ]);
 
   // ── Existing methods (unchanged) ──────────────────────────────────
 
   validateTransaction(input: TransactionRuleInput) {
+    if (
+      input.action === InventoryAction.USE ||
+      input.action === InventoryAction.LOSS
+    ) {
+      throw new BadRequestException(
+        "Use stock and Loss actions have been removed. Use Ship for outgoing stock or Damage for unusable stock.",
+      );
+    }
+
     if (!Number.isInteger(input.quantity) || input.quantity <= 0) {
       throw new BadRequestException("Quantity must be a whole number greater than zero.");
     }
 
     const sourceRequired = ([
       InventoryAction.SHIP,
-      InventoryAction.USE,
       InventoryAction.CYCLE_COUNT,
       InventoryAction.DAMAGE,
-      InventoryAction.LOSS,
     ] as InventoryAction[]).includes(input.action);
 
     if (input.action === InventoryAction.RECEIVE && !input.destinationLocationId) {
@@ -243,7 +247,7 @@ export class InventoryRulesEngine {
    * §8.4 Controlled / high-value item routing.
    *
    * Returns `true` when the product is flagged as `controlled` **and** the
-   * action is stock-reducing (SHIP, USE, DAMAGE, LOSS, CYCLE_COUNT).
+   * action is stock-reducing (SHIP, DAMAGE, CYCLE_COUNT).
    */
   isControlledItem(product: ProductInfo | null | undefined, action: InventoryAction): boolean {
     if (!product?.controlled) return false;
@@ -302,10 +306,10 @@ export class InventoryRulesEngine {
   requiresManagerReviewExtended(input: ManagerReviewInput): ManagerReviewResult {
     const reasons: string[] = [];
 
-    // Business approval policy: RECEIVE, SHIP, USE and TRANSFER post after
-    // their fixed validation rules pass. Only CYCLE_COUNT, DAMAGE and LOSS
+    // Business approval policy: RECEIVE, SHIP and TRANSFER post after
+    // their fixed validation rules pass. Only CYCLE_COUNT and DAMAGE
     // enter manager review. Risk signals remain useful as review reasons for
-    // those three review actions, but must not turn a normal movement into an
+    // those review actions, but must not turn a normal movement into an
     // approval transaction.
     if (!this.requiresManagerReview(input.action)) {
       return { requiresReview: false, reasons };

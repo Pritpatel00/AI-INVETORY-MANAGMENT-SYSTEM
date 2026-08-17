@@ -16,12 +16,10 @@ export function taskTypeLabel(type: string) {
     RECEIVE: "Receive",
     PICK: "Pick",
     SHIP: "Ship",
-    USE: "Use",
     TRANSFER: "Transfer",
     STOCK_VERIFY: "Stock verify",
     DAMAGE_INSPECTION: "Damage inspection",
     DAMAGE: "Damage",
-    LOSS: "Loss",
   };
   return labels[type] ?? type.replaceAll("_", " ");
 }
@@ -107,7 +105,7 @@ export function formatClarificationValue(field: string, result: InventoryExtract
 }
 
 export function clarificationRetryHelp(field: string) {
-  if (field === "action") return "Please say Receive, Ship, Use, Transfer, Cycle count, Damage, or Loss.";
+  if (field === "action") return "Please say Receive, Ship, Transfer, Cycle count, or Damage.";
   if (field === "product") return "Please say the item name or SKU clearly.";
   if (field === "quantity") return "Please say only the number of units.";
   return "Please say the warehouse location clearly.";
@@ -154,4 +152,4 @@ export function resolveManagerPage(page: string) {
   return page;
 }
 
-export const STOCK_OUT_ACTIONS = new Set(["SHIP", "USE", "TRANSFER"]);
+export const STOCK_OUT_ACTIONS = new Set(["SHIP", "TRANSFER"]);

@@ -26,8 +26,8 @@ Milestone 8 reorder controls are complete. The application now includes:
 - automatic authenticated synchronization with duplicate protection.
 
 Voice transcription and AI extraction do not change inventory. Safe Receive,
-Ship, Use and Transfer movements post only after worker confirmation. Cycle
-Count, Damage and Loss remain unchanged until a manager approves them.
+Ship and Transfer movements post only after worker confirmation. A different
+Cycle Count or Damage report remains unchanged until a manager approves it.
 
 ## Project structure
 
@@ -184,10 +184,10 @@ Milestone 4 is complete. Inventory transactions are created as pending records
 and require explicit worker confirmation.
 
 - Receive adds stock to the destination location.
-- Ship and Use subtract stock only when enough quantity is available.
+- Ship subtracts stock only when enough quantity is available.
 - Transfer subtracts from the source and adds to the destination together.
-- A matching Cycle Count posts automatically; a different count, Damage and
-  Loss remain pending for manager review.
+- A matching Cycle Count posts automatically; a different count and Damage
+  remain pending for manager review.
 - Duplicate request ids and repeated confirmation cannot apply stock twice.
 - Stock movement and audit status are committed in one database transaction.
 
@@ -200,7 +200,7 @@ cancel it or select **Confirm inventory update**. Confirmation creates the
 durable audit transaction and links its reviewed transcript and voice evidence.
 
 - Safe movements post after worker confirmation and business-rule validation.
-- Different Cycle Counts, Damage and Loss enter the manager approval queue;
+- Different Cycle Counts and Damage enter the manager approval queue;
   exact Cycle Counts post automatically.
 - Approve posts the reviewed adjustment atomically.
 - Reject and Request Recount close the review without changing stock.

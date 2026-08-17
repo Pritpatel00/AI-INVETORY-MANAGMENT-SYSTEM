@@ -486,7 +486,7 @@ async function signInWorker(page: Page) {
 
 async function recordVoiceAction(
   page: Page,
-  quickAction: "Ship / Use" | "Transfer" | "Cycle count" | "Damage / Loss",
+  quickAction: "Ship" | "Transfer" | "Cycle count" | "Damage",
   expectReady = true,
 ) {
   await page
@@ -640,12 +640,10 @@ test.beforeAll(async () => {
   const exactCount = originalBalances.get(sourceLocation.id)!.quantity;
   const statements: Record<string, string> = {
     ship: `Shipped one unit of ${voiceProduct.name} from ${sourceLocation.name}.`,
-    use: `Used one unit of ${voiceProduct.name} from ${sourceLocation.name}.`,
     transfer: `Transferred one unit of ${voiceProduct.name} from ${sourceLocation.name} to ${transferDestination.name}.`,
     cycleExact: `Counted ${exactCount} units of ${voiceProduct.name} at ${sourceLocation.name}.`,
     cycleDifferent: `Counted ${exactCount + 2} units of ${voiceProduct.name} at ${sourceLocation.name}.`,
     damage: `Damaged one unit of ${voiceProduct.name} at ${sourceLocation.name}.`,
-    loss: `Lost one unit of ${voiceProduct.name} from ${sourceLocation.name}.`,
     missingLocation: `Shipped one unit of ${voiceProduct.name}.`,
     locationAnswer: sourceLocation.name,
     receiveMissingDestination: `Received two units of ${voiceProduct.name}.`,
@@ -937,28 +935,12 @@ test("real voice Ship removes available stock and posts automatically", async ({
   await installVoiceFixtures(page, [voiceFixtures.ship]);
   await signInWorker(page);
   const startedAt = Date.now() - 1_000;
-  const voiceEntry = await recordVoiceAction(page, "Ship / Use");
+  const voiceEntry = await recordVoiceAction(page, "Ship");
   await expect(voiceEntry.getByText("Action", { exact: true }).locator("..")).toContainText(/ship/i);
   await expect(voiceEntry.getByText("From shelf", { exact: true }).locator("..")).toContainText(sourceLocation.name);
   await page.getByRole("button", { name: "Confirm inventory update" }).click();
   await expect(page.getByText("Transaction posted")).toBeVisible({ timeout: CONFIRM_TIMEOUT_MS });
   const transaction = await latestTransaction("SHIP", startedAt, 1);
-  expect(transaction?.status).toBe("POSTED");
-  expect(transaction?.sourceLocation?.id).toBe(sourceLocation.id);
-});
-
-test("real voice Use removes available stock and posts automatically", async ({
-  page,
-}) => {
-  if (!voiceProduct || !sourceLocation) throw new Error("Use fixture unavailable.");
-  await installVoiceFixtures(page, [voiceFixtures.use]);
-  await signInWorker(page);
-  const startedAt = Date.now() - 1_000;
-  const voiceEntry = await recordVoiceAction(page, "Ship / Use");
-  await expect(voiceEntry.getByText("Action", { exact: true }).locator("..")).toContainText(/use/i);
-  await page.getByRole("button", { name: "Confirm inventory update" }).click();
-  await expect(page.getByText("Transaction posted")).toBeVisible({ timeout: CONFIRM_TIMEOUT_MS });
-  const transaction = await latestTransaction("USE", startedAt, 1);
   expect(transaction?.status).toBe("POSTED");
   expect(transaction?.sourceLocation?.id).toBe(sourceLocation.id);
 });
@@ -1022,7 +1004,6 @@ test("real voice different Cycle Count creates manager review", async ({ page })
 
 for (const reviewAction of [
   { label: "Damage", key: "damage", action: "DAMAGE" },
-  { label: "Loss", key: "loss", action: "LOSS" },
 ] as const) {
   test(`real voice ${reviewAction.label} requires manager approval`, async ({
     page,
@@ -1030,7 +1011,7 @@ for (const reviewAction of [
     await installVoiceFixtures(page, [voiceFixtures[reviewAction.key]]);
     await signInWorker(page);
     const startedAt = Date.now() - 1_000;
-    const voiceEntry = await recordVoiceAction(page, "Damage / Loss");
+    const voiceEntry = await recordVoiceAction(page, "Damage");
     await expect(voiceEntry.getByText("Action", { exact: true }).locator("..")).toContainText(
       new RegExp(reviewAction.label, "i"),
     );
@@ -1055,7 +1036,7 @@ test("AI asks only for a missing Ship location and keeps previous details", asyn
   ]);
   await signInWorker(page);
   const startedAt = Date.now() - 1_000;
-  const voiceEntry = await recordVoiceAction(page, "Ship / Use", false);
+  const voiceEntry = await recordVoiceAction(page, "Ship", false);
   await expect(voiceEntry).toContainText(/Which location did the stock come from\?/i);
   await expect(voiceEntry.getByText("Item name", { exact: true }).locator("..")).toContainText(voiceProduct.name);
   await expect(voiceEntry.getByText("Number", { exact: true }).locator("..")).toContainText(/1/);

@@ -252,10 +252,10 @@ export function ExecutiveDashboard({
     }
     const examples = {
       RECEIVE: 'Say: “I received 50 Boxes.”',
-      SHIP_USE: 'Say: “I shipped 5 Boxes from Storage.”',
+      SHIP: 'Say: “I shipped 5 Boxes from Storage.”',
       TRANSFER: 'Say: “I moved 10 Boxes from Storage to Dispatch.”',
       CYCLE_COUNT: 'Say: “I counted 50 Boxes.”',
-      DAMAGE_LOSS: 'Say: “I damaged 2 Boxes in Storage.” or “I lost 2 Boxes from Storage.”',
+      DAMAGE: 'Say: “I damaged 2 Boxes in Storage.”',
     };
     return { title: selectedWorkflow ? "Ready — speak one short sentence" : "Ready for a voice update", detail: selectedWorkflow ? examples[selectedWorkflow] : 'Try: “I received 50 Boxes.”' };
   }, [voiceState, selectedWorkflow, activeVoiceTask]);
@@ -526,7 +526,7 @@ export function ExecutiveDashboard({
     if (!question || !("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
     const spokenQuestion = question === "Which inventory action did you perform?"
-      ? `${question} Please say receive, ship, use, transfer, cycle count, damage, or loss.`
+      ? `${question} Please say receive, ship, transfer, cycle count, or damage.`
       : question;
     window.speechSynthesis.speak(createGuidanceUtterance(spokenQuestion));
   }
@@ -539,15 +539,11 @@ export function ExecutiveDashboard({
         ? "RECEIVE"
         : ["PICK", "SHIP"].includes(activeVoiceTask.type)
           ? "SHIP"
-          : activeVoiceTask.type === "USE"
-            ? "USE"
-            : activeVoiceTask.type === "TRANSFER"
+          : activeVoiceTask.type === "TRANSFER"
               ? "TRANSFER"
               : ["DAMAGE", "DAMAGE_INSPECTION"].includes(activeVoiceTask.type)
                 ? "DAMAGE"
-                : activeVoiceTask.type === "LOSS"
-                  ? "LOSS"
-                  : "CYCLE_COUNT";
+                : "CYCLE_COUNT";
     const product = activeVoiceTask.product ?? result.fields.product;
     // A reservation shipment task carries a planned quantity, but the worker
     // states the quantity they actually shipped (partial shipments ship less
@@ -646,7 +642,7 @@ export function ExecutiveDashboard({
     return {
       ...result,
       readyForConfirmation: fieldsNeedingClarification.length === 0,
-      requiresManagerReview: ["CYCLE_COUNT", "DAMAGE", "LOSS"].includes(taskAction),
+      requiresManagerReview: ["CYCLE_COUNT", "DAMAGE"].includes(taskAction),
       confidence: Number(
         (
           requiredConfidence.reduce((sum, value) => sum + value, 0) /
@@ -670,15 +666,8 @@ export function ExecutiveDashboard({
     };
   }
 
-  function applySelectedWorkflowContext(
-    result: InventoryExtraction,
-    spokenText: string,
-  ) {
+  function applySelectedWorkflowContext(result: InventoryExtraction) {
     if (!selectedWorkflow || activeVoiceTask) return result;
-    const workerStatement = spokenText.replace(
-      /^Selected workflow:[\s\S]*?Worker statement:\s*/i,
-      "",
-    );
     const selectedAction: NonNullable<
       InventoryExtraction["fields"]["action"]
     > =
@@ -688,13 +677,9 @@ export function ExecutiveDashboard({
           ? "TRANSFER"
           : selectedWorkflow === "CYCLE_COUNT"
             ? "CYCLE_COUNT"
-            : selectedWorkflow === "SHIP_USE"
-              ? /\b(use|used|consume|consumed)\b/i.test(workerStatement)
-                ? "USE"
-                : "SHIP"
-              : /\b(loss|lost|missing)\b/i.test(workerStatement)
-                ? "LOSS"
-                : "DAMAGE";
+            : selectedWorkflow === "SHIP"
+              ? "SHIP"
+              : "DAMAGE";
 
     const missingFields = result.missingFields.filter(
       (field) => field !== "action",
@@ -713,7 +698,7 @@ export function ExecutiveDashboard({
     return {
       ...result,
       readyForConfirmation: unresolved.length === 0,
-      requiresManagerReview: ["CYCLE_COUNT", "DAMAGE", "LOSS"].includes(
+      requiresManagerReview: ["CYCLE_COUNT", "DAMAGE"].includes(
         selectedAction,
       ),
       missingFields,
@@ -731,13 +716,13 @@ export function ExecutiveDashboard({
     setVoiceState("extracting");
     setMessage("");
     try {
-      const workflowHints = { RECEIVE: "RECEIVE", SHIP_USE: "SHIP or USE", TRANSFER: "TRANSFER", CYCLE_COUNT: "CYCLE COUNT", DAMAGE_LOSS: "DAMAGE or LOSS" };
+      const workflowHints = { RECEIVE: "RECEIVE", SHIP: "SHIP", TRANSFER: "TRANSFER", CYCLE_COUNT: "CYCLE COUNT", DAMAGE: "DAMAGE" };
       const extractedResult = await extractInventoryDetails({
         transcript: selectedWorkflow ? `Selected workflow: ${workflowHints[selectedWorkflow]}. Worker statement: ${reviewedTranscript}` : reviewedTranscript,
         evidenceId,
       });
       const result = applyActiveTaskContext(
-        applySelectedWorkflowContext(extractedResult, reviewedTranscript),
+        applySelectedWorkflowContext(extractedResult),
       );
       setExtraction(result);
       setVoiceState("extracted");
@@ -987,10 +972,7 @@ export function ExecutiveDashboard({
         evidenceId: transcription?.evidenceId,
       });
       const refined = applyActiveTaskContext(
-        applySelectedWorkflowContext(
-          refinedResult,
-          `${contextTranscript} ${spokenAnswer}`,
-        ),
+        applySelectedWorkflowContext(refinedResult),
       );
       const unresolvedFields = new Set([
         ...refined.missingFields,
@@ -1059,7 +1041,7 @@ export function ExecutiveDashboard({
       )
     : [];
   const pendingHistoryStatuses = ["Pending", "Recount requested"];
-  const managerReviewHistoryTypes = ["Cycle count", "Damage", "Loss"];
+  const managerReviewHistoryTypes = ["Cycle count", "Damage"];
   const displayedTransactions = allWorkerTransactions.filter((transaction) =>
     historyView === "PENDING"
       ? pendingHistoryStatuses.includes(transaction.status) &&
@@ -1173,7 +1155,7 @@ export function ExecutiveDashboard({
   }, [onPendingTaskCountChange, workerTasks.length]);
   function taskWorkflow(type: string) {
     if (type === "RECEIVE") return "RECEIVE" as const;
-    if (type === "PICK" || type === "SHIP") return "SHIP_USE" as const;
+    if (type === "PICK" || type === "SHIP") return "SHIP" as const;
     if (type === "TRANSFER") return "TRANSFER" as const;
     return "CYCLE_COUNT" as const;
   }
@@ -1371,10 +1353,9 @@ export function ExecutiveDashboard({
           const order = activeVoiceTask.reservationReference ? ` for Order ${activeVoiceTask.reservationReference}` : "";
           return `I shipped [number] ${item} from ${activeVoiceTask.sourceLocation?.name ?? place}${order}.`;
         }
-        if (["PICK", "USE"].includes(activeVoiceTask.type)) return `I shipped [number] ${item} from ${place}.`;
+        if (activeVoiceTask.type === "PICK") return `I shipped [number] ${item} from ${place}.`;
         if (activeVoiceTask.type === "TRANSFER") return `I transferred ${activeVoiceTask.quantity ?? "[number]"} ${item} from ${activeVoiceTask.sourceLocation?.name ?? "the source"} to ${activeVoiceTask.destinationLocation?.name ?? "the destination"}.`;
         if (["DAMAGE", "DAMAGE_INSPECTION"].includes(activeVoiceTask.type)) return `I found [number] damaged ${item} on ${place}.`;
-        if (activeVoiceTask.type === "LOSS") return `I found [number] missing ${item} from ${place}.`;
         return "I counted [number].";
       })()
     : "";
@@ -1444,7 +1425,7 @@ export function ExecutiveDashboard({
   }
 
   if (page === "History") {
-    const reviewActions = ["Cycle count", "Damage", "Loss"];
+    const reviewActions = ["Cycle count", "Damage"];
     const pendingTxs = allWorkerTransactions.filter(
       (transaction) =>
         ["Pending", "Recount requested"].includes(transaction.status) &&
@@ -1963,7 +1944,7 @@ export function ExecutiveDashboard({
                     )}
                     {submissionState === "complete" &&
                       submittedTransaction &&
-                      ["DAMAGE", "LOSS", "RECEIVE"].includes(submittedTransaction.action) && (
+                      ["DAMAGE", "RECEIVE"].includes(submittedTransaction.action) && (
                         <div className="mb-4 rounded-xl border border-[#d5e1f0] bg-[#f8fbff] px-4 py-4">
                           <p className="flex items-center gap-2 text-[10px] font-extrabold uppercase tracking-[0.13em] text-[#0e7490]">
                             <Camera size={13} /> Photo evidence
@@ -2111,12 +2092,12 @@ export function ExecutiveDashboard({
           <div className="mt-5 grid grid-cols-2 gap-3">
             {[
               [ArrowDownToLine, "Receive stock", "New stock came in", "bg-[#eaf8f1] text-[#16865b]"],
-              [PackageMinus, "Ship or use stock", "Stock went out", "bg-[#edf4ff] text-[#155eef]"],
+              [PackageMinus, "Ship stock", "Stock was dispatched", "bg-[#edf4ff] text-[#155eef]"],
               [ArrowRightLeft, "Move stock", "Moved to another shelf", "bg-[#f2efff] text-[#7257d6]"],
               [ClipboardCheck, "Count stock", "Counted what is on the shelf", "bg-[#fff5df] text-[#d47b08]"],
-              [AlertTriangle, "Damage or loss", "Report unusable or missing stock", "bg-[#fff0f5] text-[#be185d]"],
+              [AlertTriangle, "Damage stock", "Report unusable stock", "bg-[#fff0f5] text-[#be185d]"],
             ].map(([Icon, title, detail, tone], index) => {
-              const workflow = (["RECEIVE", "SHIP_USE", "TRANSFER", "CYCLE_COUNT", "DAMAGE_LOSS"] as const)[index];
+              const workflow = (["RECEIVE", "SHIP", "TRANSFER", "CYCLE_COUNT", "DAMAGE"] as const)[index];
               const active = selectedWorkflow === workflow;
               return (
               <button key={String(title)} type="button" aria-pressed={active} onClick={() => chooseWorkflow(workflow)} className={`rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md ${active ? "border-[#155eef] bg-[#f4f8ff] shadow-[0_8px_22px_rgba(21,94,239,0.12)]" : "border-[#e4eaf3] hover:border-[#b9cae2]"}`}>

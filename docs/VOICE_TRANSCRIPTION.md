@@ -29,8 +29,7 @@ ledger unchanged.
 When the worker starts from a quick-action card, that selected workflow is
 trusted context. The AI still extracts the item, quantity and locations, but a
 minor speech error cannot change a selected Cycle Count into Ship, for example.
-Within combined cards, the worker's words select Ship versus Use and Damage
-versus Loss.
+Each quick-action card now represents one clear action.
 
 For a short answer to a clarification question, the browser sends an English
 language hint to Whisper. This reduces incorrect language detection on
@@ -99,8 +98,8 @@ transaction and restores the original test balance. If the destination is not
 spoken, the system asks only “Where did you place the received stock?” and does
 not create or post a transaction until the answer is supplied and confirmed.
 
-The complete browser matrix also checks Ship, Use, Transfer, matching and
-different Cycle Counts, Damage, Loss and a missing-location clarification.
+The complete browser matrix also checks Ship, Transfer, matching and different
+Cycle Counts, Damage and a missing-location clarification.
 Approved speech variants are matched only when they identify one unique active
 location. For example, common Whisper variants of Dispatch such as “spatch” or
 “this patch” are safely normalized to Dispatch.

@@ -45,11 +45,9 @@ control.
 |---|---|---|
 | Received, incoming, delivered, put at, placed, added to | `RECEIVE` | Destination |
 | Shipped, dispatched | `SHIP` | Source |
-| Used, consumed | `USE` | Source |
 | Moved or transferred | `TRANSFER` | Source and destination |
 | Counted or physical count | `CYCLE_COUNT` | Source |
 | Damaged or broken | `DAMAGE` | Source |
-| Lost or missing | `LOSS` | Source |
 
 ## Safety controls
 
@@ -63,7 +61,7 @@ control.
 - The API clears locations that are not relevant to the selected action.
 - Required fields below the confidence threshold are sent back for
   clarification.
-- Cycle count, damage and loss are marked as manager-review actions.
+- Different cycle counts and damage are marked as manager-review actions.
 - AI extraction never creates or posts an inventory transaction.
 
 ## Clarification examples
@@ -119,7 +117,7 @@ The system handles these answers in a controlled sequence:
 
 This is vocabulary normalization, not permission for the model to invent an
 action. The complete proposal still requires worker confirmation, and
-cycle-count, damage and loss actions still require manager review.
+different cycle-count and damage actions still require manager review.
 
 ## Local configuration
 
