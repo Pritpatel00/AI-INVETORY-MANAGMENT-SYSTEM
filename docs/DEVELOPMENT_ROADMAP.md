@@ -175,33 +175,33 @@ Visible result:
 - rejected and recount-requested transactions never change stock;
 - manager-approved adjustments are recorded in the audit ledger.
 
-## Milestone 8 - Reorder and notifications
+## Milestone 8 - Low-stock purchase items
 
 Completed:
 
 1. Added automatic safety-stock checks after posted inventory movements.
-2. Added one active purchase-order draft per product and location.
-3. Added current stock, safety level and suggested reorder quantity.
-4. Added configured supplier name and email fields.
-5. Added manager-only Approve and Cancel controls.
-6. Added BullMQ background supplier-email delivery through Valkey.
-7. Added automatic cancellation when stock recovers before draft approval.
-8. Added Nodemailer SMTP delivery with a local Mailpit test inbox.
-9. Added three-attempt delivery retry with failure details.
-10. Added manager-only retry and final sent status.
-11. Added duplicate, role, delivery and unchanged-stock verification.
+2. Added one active Purchase Items record per product and location.
+3. Added current stock, safety level and suggested purchase quantity.
+4. Added configured supplier name and minimum order quantity.
+5. Added manager-only Purchase Items page with search, filters and severity sort.
+6. Added automatic removal when stock recovers.
+7. Added fixed-rules suggested-quantity calculation (reorder quantity, safety
+   restoration, supplier minimum order quantity).
+8. Removed the supplier-email and purchase-order approval workflow.
 
-Production configuration remaining:
+Removed functionality:
 
-1. Connect the approved company SMTP/Postfix server.
-2. Replace demonstration supplier addresses with verified business addresses.
-3. Confirm sender-domain security and mail-retention policy.
+1. Removed approve / cancel reorder-draft endpoints.
+2. Removed queue / retry supplier-email endpoints.
+3. Removed Nodemailer delivery and BullMQ supplier-email jobs.
+4. Removed email-delivery status handling and retry logic.
+5. Removed purchase-order email templates.
 
 Visible result:
 
-- low stock produces one manager-reviewable reorder draft;
-- approved drafts are delivered to the local test inbox;
-- a temporary mail failure can be reviewed and retried by a manager.
+- low stock produces a single manager-reviewable Purchase Item;
+- the manager reviews available and required quantities directly;
+- no supplier email is created or sent.
 
 ## Milestone 9 - PWA and offline work
 

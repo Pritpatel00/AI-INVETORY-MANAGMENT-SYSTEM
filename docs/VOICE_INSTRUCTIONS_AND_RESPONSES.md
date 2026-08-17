@@ -30,7 +30,7 @@ confirmation; **cycle count, damage and loss always require manager review**.
 | “5 units of Item 402 are damaged at Shelf B.” | `DAMAGE` | Source | **Yes** |
 | “10 units of Item 402 are missing from Shelf B.” | `LOSS` | Source | **Yes** |
 
-Recognized intent keywords (see `services/api/src/ai/ai.service.ts`):
+Recognized intent keywords (see `backend/api/src/ai/ai.service.ts`):
 
 | Action | Words that trigger it |
 |---|---|
@@ -147,11 +147,11 @@ question at a time** (browser text-to-speech) and waits for a voice answer:
 
 | Field asked about | Question the system answers with |
 |---|---|
-| `action` | “What inventory action did you perform?” |
+| `action` | “Which inventory action did you perform?” |
 | `product` | “Which item or SKU does this update apply to?” |
 | `quantity` | “What quantity should be recorded?” |
 | `sourceLocation` | “Which location did the stock come from?” |
-| `destinationLocation` | “Which location should receive the stock?” |
+| `destinationLocation` | “Where did you place the received stock?” |
 
 The worker answers only the requested detail (e.g. “Cycle count.”). The system
 merges the answer into the transcript using this exact format before re-running
@@ -166,7 +166,7 @@ Example:
 
 ```text
 Item 402, fifty units at Shelf B.
-Clarification answer to "What inventory action did you perform?": Cycle count.
+Clarification answer to "Which inventory action did you perform?": Cycle count.
 ```
 
 The system answers this merge with the **same extraction JSON** as in section 3

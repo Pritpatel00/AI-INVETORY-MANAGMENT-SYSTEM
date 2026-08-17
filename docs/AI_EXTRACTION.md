@@ -71,7 +71,7 @@ control.
 - “Which item or SKU does this update apply to?”
 - “What quantity should be recorded?”
 - “Which location did the stock come from?”
-- “Which location should receive the stock?”
+- “Where did you place the received stock?”
 
 ## Incremental voice clarification
 
@@ -80,7 +80,7 @@ The worker does not repeat the complete inventory statement.
 Example:
 
 1. Original statement: “Item 402, fifty units at Shelf B.”
-2. System asks: “What inventory action did you perform?”
+2. System asks: “Which inventory action did you perform?”
 3. Worker answers only: “Cycle count.”
 4. The system keeps Item 402, fifty units and Shelf B, then adds the
    `CYCLE_COUNT` action.
@@ -91,7 +91,7 @@ When several fields are missing, the application asks them sequentially:
 2. Worker answers: “Item 402.”
 3. “What quantity should be recorded?”
 4. Worker answers: “Five units.”
-5. “Which location should receive the stock?”
+5. “Where did you place the received stock?”
 6. Worker answers: “Shelf B.”
 
 The **Hear question** button uses browser text-to-speech, and **Answer this

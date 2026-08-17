@@ -13,28 +13,6 @@ services:
       - ./keycloak/nirka-inventory-realm.json:/opt/keycloak/data/import/nirka-inventory-realm.json:ro
       - nirka_keycloak_data:/opt/keycloak/data
 
-  valkey:
-    image: docker.io/valkey/valkey:8-alpine
-    container_name: nirka-inventory-valkey
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:6379:6379"
-    volumes:
-      - nirka_valkey_data:/data
-    healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  mailpit:
-    image: docker.io/axllent/mailpit:latest
-    container_name: nirka-inventory-mailpit
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:1025:1025"
-      - "127.0.0.1:8025:8025"
-
   prometheus:
     image: prom/prometheus:v2.53.0
     container_name: nirka-inventory-prometheus
@@ -72,7 +50,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./promtail.yml:/etc/promtail/config.yml:ro
-      - ../services/api/logs:/var/log/api:ro
+      - ../backend/api/logs:/var/log/api:ro
       - nirka_promtail_data:/positions
     command: ["-config.file=/etc/promtail/config.yml"]
     depends_on:
@@ -99,7 +77,6 @@ services:
 
 volumes:
   nirka_keycloak_data:
-  nirka_valkey_data:
   nirka_prometheus_data:
   nirka_loki_data:
   nirka_promtail_data:

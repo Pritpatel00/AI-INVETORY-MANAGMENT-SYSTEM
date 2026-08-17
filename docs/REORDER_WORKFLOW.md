@@ -1,6 +1,6 @@
-# Low-Stock Reorder Workflow
+# Purchase Items Workflow
 
-## Automatic threshold check
+## Automatic low-stock detection
 
 After a stock movement is posted, the backend checks every affected product and
 location:
@@ -10,82 +10,79 @@ Available stock = Quantity - Reserved quantity
 Low stock = Available stock < Safety stock
 ```
 
-When stock is low, the suggested reorder quantity is the larger of:
+When stock is low, the product appears on the manager's **Purchase Items** page.
+
+## Suggested purchase quantity
+
+The suggested purchase quantity is the larger of:
 
 - the product's configured reorder quantity;
-- the amount needed to return to the safety level; or
+- the amount needed to restore stock above the safety level; or
 - the approved supplier's minimum order quantity.
 
+The calculation lives in the fixed backend rules engine (`evaluateReorder`) and
+is applied by the inventory service when it syncs reorder drafts:
+
+```text
+suggestedQuantity = max(reorderQuantity, safetyStock - available, supplier.minimumOrderQuantity)
+```
+
 The supplier minimum is applied automatically: if the calculated suggestion is
-below the supplier's minimum order quantity, the draft is created with the
-supplier minimum instead, so every purchase-order request respects the
-supplier's minimum-order rule.
+below the supplier's minimum order quantity, the draft is stored with the
+supplier minimum instead, so every purchase request respects the supplier's
+minimum-order rule.
 
 ## Duplicate prevention
 
 Each product and location can have only one active draft. Repeated balance
-checks update that draft rather than creating another one. The database also
-enforces the active key as unique.
+checks update that draft rather than creating another one. The database enforces
+the active key (`productId:locationId`) as unique.
 
-If stock recovers while a draft is still unapproved, the draft is cancelled
-automatically. Approved drafts remain active because procurement has already
-made a decision.
+## Automatic removal when stock recovers
+
+As soon as available stock returns to the safety level, the draft is cancelled
+automatically and disappears from the Purchase Items page. No manager action is
+required.
 
 ## Manager workflow
 
-The manager dashboard displays:
+The manager dashboard displays a clean table with:
 
-- product and warehouse location;
-- available stock and safety level;
-- suggested reorder quantity;
-- supplier name and email;
-- draft, approved, email-queued, delivery-failed or email-sent status;
-- delivery attempt count and the latest error when delivery fails.
+- item name and SKU;
+- supplier name (when assigned);
+- available quantity;
+- safety-stock quantity;
+- suggested purchase quantity; and
+- low-stock status (low stock or out of stock).
 
-Available actions:
+The page supports:
 
-1. **Approve** records the manager and approval time.
-2. **Cancel** closes the draft and clears its active key.
-3. **Queue email** is available only after approval and only when the product
-   has a configured supplier email.
-4. **Retry email** is available after a final delivery failure.
+- searching by product name or SKU;
+- filtering by all, low-stock or out-of-stock items;
+- sorting by shortage severity (or item name);
+- a refresh button to re-check current balances.
 
-## Expected receiving tasks
-
-Approving a draft automatically creates an expected-receiving task in the
-worker task queue, linked to the purchase order:
-
-- task type `RECEIVE` with high priority;
-- the product, warehouse location and approved order quantity;
-- due at the end of the supplier's lead time (or today when no lead time is
-  configured);
-- unassigned at first: any available warehouse executive can claim it from the
-  queue by starting it, and the claim is recorded on the task.
-
-The unique purchase-order link guarantees exactly one task per approved order,
-even when approval is retried. Cancelling a draft - manually or automatically
-when stock recovers - closes the linked task unless it was already completed.
-
-## Email delivery
-
-Queueing an approved draft records `QUEUED` in PostgreSQL and submits a
-background BullMQ job through Valkey. Nodemailer delivers the purchase-order
-request through the configured SMTP server.
-
-Each job can try three times with an increasing delay:
+When nothing is low, the page shows the empty state:
 
 ```text
-APPROVED -> QUEUED -> SENT
-                    -> FAILED -> manager retry -> QUEUED -> SENT
+No products currently require purchasing.
 ```
 
-The draft stays approved when delivery fails. The manager can see the latest
-error and retry without approving the draft again. A successful delivery marks
-the draft `SENT` and closes its active duplicate-prevention key.
+There are no email, approval or purchase-order controls on the page. The manager
+reviews the available and required quantities and prepares the order outside
+this system.
 
-Local development uses Mailpit, which captures messages in a browser-accessible
-test inbox instead of contacting a real supplier. Production must use the
-company-approved SMTP/Postfix server and verified supplier addresses.
+## Out of scope
+
+The legacy supplier-email and purchase-order approval workflow was removed:
+
+- approve / cancel reorder-draft endpoints;
+- queue / retry supplier-email endpoints;
+- Nodemailer delivery and BullMQ jobs;
+- email-delivery status handling and retry logic;
+- purchase-order email templates.
+
+No supplier email is created or sent by this workflow.
 
 ## Verification
 
@@ -93,7 +90,6 @@ Run:
 
 ```powershell
 npm run reorder:verify
-npm run notifications:verify
 ```
 
 The automated verification confirms:
@@ -101,15 +97,6 @@ The automated verification confirms:
 1. Low stock creates a draft.
 2. Rechecking stock creates no duplicate.
 3. The suggested quantity follows the configured rules.
-4. Worker access is rejected.
-5. Manager approval succeeds.
-6. Supplier email is queued only after approval.
-7. Approving a draft creates one expected-receiving task in the worker queue.
-8. Re-approving the same draft does not create a second task.
-9. Cancelling a draft closes its open receiving task.
-10. Cancellation succeeds.
-11. Reorder actions do not change inventory stock.
-12. A queued message reaches the local test inbox.
-13. Temporary SMTP failure is recorded after three attempts.
-14. A worker cannot retry a failed supplier email.
-15. A manager retry succeeds after SMTP recovers.
+4. An item disappears when stock recovers.
+5. Reorder actions do not change inventory stock.
+6. No supplier email is created or sent.

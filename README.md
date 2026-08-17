@@ -20,8 +20,7 @@ Milestone 8 reorder controls are complete. The application now includes:
 - spoken proposal read-back and explicit worker confirmation;
 - pending transactions linked to the reviewed transcript and voice evidence;
 - a live manager queue with Approve, Reject and Request Recount decisions;
-- automatic low-stock purchase-order drafts with duplicate prevention;
-- manager approval, cancellation and retryable supplier-email delivery.
+- automatic low-stock Purchase Items with duplicate prevention;
 - installable PWA support with network-status visibility;
 - device-local pending confirmation storage during temporary network loss;
 - automatic authenticated synchronization with duplicate protection.
@@ -34,26 +33,23 @@ Count, Damage and Loss remain unchanged until a manager approves them.
 
 ```text
 AI-Voice-Inventory-Web/
-|-- app/                         Next.js routes, layout and global styles
-|-- src/
-|   `-- features/
-|       `-- inventory/           Current worker and manager inventory feature
-|           |-- data/            Temporary demonstration data
-|           |-- InventoryApp.tsx Main inventory application interface
-|           `-- types.ts         Frontend inventory types
-|-- services/
-|   |-- api/                     NestJS inventory and protected speech API
+|-- frontend/
+|   |-- app/                     Web routes, layout and global styles
+|   |-- src/features/inventory/  Executive, manager and administrator UI
+|   |-- public/                  PWA and static web assets
+|   `-- tests/                   Frontend and browser workflow tests
+|-- backend/
+|   |-- api/                     NestJS API, rules, Prisma and backend tests
 |   `-- speech/                  Local faster-whisper transcription service
 |-- packages/
 |   |-- contracts/               Shared API contracts and generated types
 |   `-- validation/              Shared Zod validation rules
 |-- infrastructure/             Deployment and server configuration
 |-- docs/                        Project roadmap and technical documentation
-`-- public/                      Static web assets
+`-- video/                       Demonstration and storyboard assets
 ```
 
-This feature-based structure keeps the worker and manager experiences together
-while separating inventory rules, speech processing and infrastructure.
+See `PROJECT_STRUCTURE.md` for file ownership and all root-level commands.
 
 ## Run locally
 
@@ -67,12 +63,6 @@ Start Keycloak in a second terminal:
 
 ```powershell
 npm run auth:local:start
-```
-
-Start the local notification queue and test email inbox:
-
-```powershell
-npm run notifications:local:start
 ```
 
 Set up the local speech service once:
@@ -171,7 +161,7 @@ npm run api:db:reset:test-fixtures
 
 Milestone 2 is complete. The project now includes:
 
-- a NestJS API in `services/api`;
+- a NestJS API in `backend/api`;
 - PostgreSQL development configuration;
 - a Prisma inventory schema and demonstration seed data;
 - products, locations, balances, users, pending transactions and reorder drafts;
@@ -196,7 +186,8 @@ and require explicit worker confirmation.
 - Receive adds stock to the destination location.
 - Ship and Use subtract stock only when enough quantity is available.
 - Transfer subtracts from the source and adds to the destination together.
-- Cycle Count, Damage and Loss remain pending for manager review.
+- A matching Cycle Count posts automatically; a different count, Damage and
+  Loss remain pending for manager review.
 - Duplicate request ids and repeated confirmation cannot apply stock twice.
 - Stock movement and audit status are committed in one database transaction.
 
@@ -209,7 +200,8 @@ cancel it or select **Confirm inventory update**. Confirmation creates the
 durable audit transaction and links its reviewed transcript and voice evidence.
 
 - Safe movements post after worker confirmation and business-rule validation.
-- Cycle Count, Damage and Loss enter the manager approval queue.
+- Different Cycle Counts, Damage and Loss enter the manager approval queue;
+  exact Cycle Counts post automatically.
 - Approve posts the reviewed adjustment atomically.
 - Reject and Request Recount close the review without changing stock.
 - Workers cannot call manager decision endpoints.
@@ -217,26 +209,23 @@ durable audit transaction and links its reviewed transcript and voice evidence.
 Run `npm run workflow:verify` to repeat the complete role and stock-safety
 verification. See `docs/CONFIRMATION_AND_MANAGER_REVIEW.md` for the full flow.
 
-## Low-stock reorder workflow
+## Low-stock purchase items
 
-Milestone 8 now checks affected balances after every posted movement or approved
-adjustment. If available stock is below the product safety level, the system
-creates or refreshes one active purchase-order draft for that product and
-location.
+Milestone 8 checks affected balances after every posted movement or approved
+adjustment. If available stock is below the product safety level, the product
+appears on the manager's Purchase Items page for that product and location.
 
-- The manager sees current stock, safety stock and suggested reorder quantity.
-- Only managers and administrators can approve or cancel drafts.
-- An approved draft is delivered by a BullMQ worker through Valkey and SMTP.
-- Local emails are captured safely in Mailpit at `http://localhost:8025`.
-- Delivery is tried up to three times, and a manager can retry a final failure.
-- Repeated stock checks cannot create duplicate active drafts.
-- A draft is automatically cancelled when stock recovers before approval.
+- The manager sees item and SKU, supplier, available stock, safety stock and
+  suggested purchase quantity.
+- The suggested quantity is the larger of the configured reorder quantity, the
+  amount needed to restore stock above the safety level, and the supplier's
+  minimum order quantity.
+- The page supports search, low-stock/out-of-stock filters and severity sort.
+- A product is automatically removed when stock recovers.
+- Repeated stock checks cannot create duplicate active Purchase Items records.
+- No supplier email is created or sent.
 
-Run `npm run reorder:verify` to repeat the threshold, role and duplicate checks.
-Run `npm run notifications:verify` to verify successful delivery, failure,
-role protection and manager retry. The verification uses only the local test
-inbox and does not contact a real supplier. See `docs/REORDER_WORKFLOW.md` and
-`docs/NOTIFICATION_DELIVERY.md` for the detailed rules.
+See `docs/REORDER_WORKFLOW.md` for the detailed rules.
 
 ## Voice capture and transcription
 

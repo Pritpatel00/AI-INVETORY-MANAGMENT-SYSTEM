@@ -19,10 +19,14 @@
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+**/test-results/
+**/playwright-report/
+**/blob-report/
 
 # next.js
 /.next/
 /.vinext/
+**/.vinext/
 /out/
 
 # misc
@@ -37,9 +41,13 @@ yarn-error.log*
 .pnpm-debug.log*
 dev-server*.log
 api-server*.log
+/*.log
+*.log
+/.freebuff/
+/cable-reel-racking-massey-rack-2.webp
 
 # API runtime logs (shipped to Loki by Promtail)
-services/api/logs/*.log
+backend/api/logs/*.log
 
 # env files (can opt-in for committing if needed)
 .env*
@@ -49,8 +57,17 @@ services/api/logs/*.log
 
 # typescript
 next-env.d.ts
-/dist/
-services/api/dist/
+/frontend/dist/
+/backend/api/dist/
 /.wrangler/
+**/.wrangler/
 /outputs/
 /work/
+
+# generated language and build caches
+**/__pycache__/
+*.py[cod]
+*.tsbuildinfo
+
+# local data migration backups
+/backend/api/prisma/backups/

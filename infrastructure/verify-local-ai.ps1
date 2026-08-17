@@ -204,7 +204,7 @@ try {
         -Headers $workerHeaders `
         -ContentType "application/json" `
         -Body (@{
-            transcript = "$actionContext`nClarification answer to `"What inventory action did you perform?`": Cycle count."
+            transcript = "$actionContext`nClarification answer to `"Which inventory action did you perform?`": Cycle count."
         } | ConvertTo-Json) `
         -TimeoutSec 180
 
@@ -275,7 +275,7 @@ try {
             -Headers $workerHeaders `
             -ContentType "application/json" `
             -Body (@{
-                transcript = "$actionContext`nClarification answer to `"What inventory action did you perform?`": $imperfectAnswer."
+                transcript = "$actionContext`nClarification answer to `"Which inventory action did you perform?`": $imperfectAnswer."
             } | ConvertTo-Json) `
             -TimeoutSec 180
 

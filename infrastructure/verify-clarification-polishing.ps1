@@ -66,7 +66,7 @@ try {
 
     $actionResults = foreach ($case in $cases) {
         $requestJson = @{
-            transcript = "$context`nClarification answer to `"What inventory action did you perform?`": $($case.Answer)."
+            transcript = "$context`nClarification answer to `"Which inventory action did you perform?`": $($case.Answer)."
         } | ConvertTo-Json -Compress
         $requestBytes = [System.Text.Encoding]::UTF8.GetBytes($requestJson)
         $response = Invoke-RestMethod `

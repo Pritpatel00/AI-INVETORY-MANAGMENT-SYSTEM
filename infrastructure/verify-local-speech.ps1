@@ -25,7 +25,7 @@ try {
     try {
         $synthesizer.SetOutputToWaveFile($audioPath)
         $synthesizer.Speak(
-            "Received five units of item four zero two at shelf B from supplier X."
+            "Received five units of Cable."
         )
     }
     finally {

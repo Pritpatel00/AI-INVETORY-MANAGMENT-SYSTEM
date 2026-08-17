@@ -1,0 +1,648 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  WORKER
+  MANAGER
+  ADMINISTRATOR
+}
+
+enum InventoryAction {
+  RECEIVE
+  SHIP
+  USE
+  TRANSFER
+  CYCLE_COUNT
+  DAMAGE
+  LOSS
+}
+
+enum StockCondition {
+  GOOD
+  DAMAGED
+  HOLD
+}
+
+enum LocationSource {
+  SPOKEN
+  RECEIVING_DEFAULT
+  WORKER_ZONE
+  CLARIFIED
+}
+
+enum TransactionStatus {
+  PENDING
+  RECOUNT_REQUESTED
+  APPROVED
+  REJECTED
+  POSTED
+  CANCELLED
+}
+
+enum ReorderStatus {
+  DRAFT
+  APPROVED
+  CANCELLED
+}
+
+enum DiscrepancySeverity {
+  NONE
+  MINOR
+  MEDIUM
+  MAJOR
+  CRITICAL
+}
+
+enum DiscrepancyStatus {
+  OPEN
+  AWAITING_REVIEW
+  RECOUNT_REQUESTED
+  APPROVED
+  REJECTED
+  RESOLVED_AS_TRANSFER
+  CLOSED
+}
+
+enum DiscrepancyReason {
+  COUNT_DIFFERENCE
+  UNRECORDED_RECEIPT
+  UNRECORDED_SHIPMENT
+  WRONG_LOCATION
+  DAMAGE
+  LOSS
+  COUNTING_ERROR
+  SYSTEM_ERROR
+  OTHER
+}
+
+enum NotificationType {
+  NEW_DISCREPANCY
+  MAJOR_CRITICAL_DISCREPANCY
+  RECOUNT_ASSIGNED
+  RECOUNT_COMPLETED
+  DISCREPANCY_APPROVED
+  DISCREPANCY_REJECTED
+  RESOLVED_AS_TRANSFER
+  SHIPMENT_TASK_ASSIGNED
+  SHIPMENT_PREPARED
+  SHIPMENT_COMPLETED
+  SHIPMENT_CANCELLED
+}
+
+enum DiscrepancyAuditAction {
+  CASE_CREATED
+  WORKER_CONFIRMED
+  REVIEW_OPENED
+  RECOUNT_REQUESTED
+  RECOUNT_COMPLETED
+  APPROVED
+  REJECTED
+  RESOLVED_AS_TRANSFER
+  PHOTO_UPLOADED
+  CASE_CLOSED
+}
+
+enum StockRequestStatus {
+  CONFIRMED
+  PARTIALLY_RESERVED
+  FULLY_RESERVED
+  PARTIALLY_FULFILLED
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum StockReservationStatus {
+  ACTIVE
+  PARTIALLY_SHIPPED
+  COMPLETED
+  RELEASED
+  CANCELLED
+  EXPIRED
+}
+
+model User {
+  id                      String                  @id @default(uuid())
+  employeeId              String                  @unique
+  email                   String                  @unique
+  displayName             String
+  role                    UserRole
+  shift                   String?
+  warehouseZone           String?                 @map("warehouse_zone")
+  active                  Boolean                 @default(true)
+  lastLoginAt             DateTime?               @map("last_login_at")
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+  createdTransactions     InventoryTransaction[]  @relation("CreatedTransactions")
+  approvedTransactions    InventoryTransaction[]  @relation("ApprovedTransactions")
+  voiceEvidence           VoiceEvidence[]
+  assignedTasks           InventoryTask[]         @relation("AssignedTasks")
+  assignedCycleCountPlans CycleCountPlan[]
+  workerDiscrepancies     Discrepancy[]           @relation("WorkerDiscrepancies")
+  managerDiscrepancies    Discrepancy[]           @relation("ManagerDiscrepancies")
+  resolverDiscrepancies   Discrepancy[]           @relation("ResolverDiscrepancies")
+  notifications           Notification[]
+  uploadedEvidence        DiscrepancyEvidence[]   @relation("EvidenceUploaders")
+  workerAuditEvents       DiscrepancyAuditEvent[] @relation("AuditWorkerEvents")
+  managerAuditEvents      DiscrepancyAuditEvent[] @relation("AuditManagerEvents")
+  createdStockRequests    StockRequest[]          @relation("CreatedStockRequests")
+  createdReservations     StockReservation[]      @relation("CreatedReservations")
+  reservationAuditEvents  ReservationAuditEvent[]
+  preparedShipments       InventoryTask[]          @relation("PreparedShipments")
+
+  @@map("users")
+}
+
+model UserAccessAudit {
+  id                String   @id @default(uuid())
+  action            String
+  actorUsername     String   @map("actor_username")
+  actorEmail        String?  @map("actor_email")
+  targetUserId      String   @map("target_user_id")
+  targetEmployeeId  String   @map("target_employee_id")
+  targetDisplayName String   @map("target_display_name")
+  details           String?
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([targetUserId])
+  @@map("user_access_audit")
+}
+
+model Product {
+  id                     String                       @id @default(uuid())
+  sku                    String                       @unique
+  name                   String
+  unit                   String                       @default("unit")
+  safetyStock            Int                          @default(0)
+  reorderQuantity        Int                          @default(0)
+  supplierName           String?
+  supplierEmail          String?
+  supplierId             String?
+  active                 Boolean                      @default(true)
+  controlled             Boolean                      @default(false)
+  createdAt              DateTime                     @default(now())
+  updatedAt              DateTime                     @updatedAt
+  balances               InventoryBalance[]
+  transactions           InventoryTransaction[]
+  reorderDrafts          ReorderDraft[]
+  supplier               Supplier?                    @relation(fields: [supplierId], references: [id])
+  tasks                  InventoryTask[]
+  discrepancies          Discrepancy[]
+  stockRequestLines      StockRequestLine[]
+  reservationAllocations StockReservationAllocation[]
+
+  @@index([supplierId])
+  @@map("products")
+}
+
+model Location {
+  id                      String                       @id @default(uuid())
+  code                    String                       @unique
+  name                    String
+  description             String?
+  active                  Boolean                      @default(true)
+  createdAt               DateTime                     @default(now())
+  updatedAt               DateTime                     @updatedAt
+  balances                InventoryBalance[]
+  sourceTransactions      InventoryTransaction[]       @relation("SourceLocationTransactions")
+  destinationTransactions InventoryTransaction[]       @relation("DestinationLocationTransactions")
+  reorderDrafts           ReorderDraft[]
+  tasks                   InventoryTask[]              @relation("TaskLocation")
+  sourceTasks             InventoryTask[]              @relation("TaskSourceLocation")
+  destinationTasks        InventoryTask[]              @relation("TaskDestinationLocation")
+  discrepancies           Discrepancy[]
+  reservationAllocations  StockReservationAllocation[]
+
+  @@map("locations")
+}
+
+model InventoryBalance {
+  id               String   @id @default(uuid())
+  productId        String
+  locationId       String
+  quantity         Int      @default(0)
+  reservedQuantity Int      @default(0)
+  updatedAt        DateTime @updatedAt
+  product          Product  @relation(fields: [productId], references: [id])
+  location         Location @relation(fields: [locationId], references: [id])
+
+  @@unique([productId, locationId])
+  @@index([locationId])
+  @@map("inventory_balances")
+}
+
+model StockRequest {
+  id              String                  @id @default(uuid())
+  requestNumber   String                  @unique @map("request_number")
+  requestType     String                  @map("request_type")
+  referenceNumber String                  @unique @map("reference_number")
+  requestedFor    String                  @map("requested_for")
+  requiredDate    DateTime                @map("required_date")
+  notes           String?
+  status          StockRequestStatus      @default(CONFIRMED)
+  createdById     String                  @map("created_by_id")
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
+  createdBy       User                    @relation("CreatedStockRequests", fields: [createdById], references: [id])
+  lines           StockRequestLine[]
+  reservations    StockReservation[]
+  auditEvents     ReservationAuditEvent[]
+
+  @@index([status, requiredDate])
+  @@map("stock_requests")
+}
+
+model StockRequestLine {
+  id               String                       @id @default(uuid())
+  stockRequestId   String                       @map("stock_request_id")
+  productId        String                       @map("product_id")
+  requiredQuantity Int                          @map("required_quantity")
+  reservedQuantity Int                          @default(0) @map("reserved_quantity")
+  shippedQuantity  Int                          @default(0) @map("shipped_quantity")
+  request          StockRequest                 @relation(fields: [stockRequestId], references: [id], onDelete: Cascade)
+  product          Product                      @relation(fields: [productId], references: [id])
+  allocations      StockReservationAllocation[]
+
+  @@unique([stockRequestId, productId])
+  @@index([productId])
+  @@map("stock_request_lines")
+}
+
+model StockReservation {
+  id                String                       @id @default(uuid())
+  reservationNumber String                       @unique @map("reservation_number")
+  stockRequestId    String                       @map("stock_request_id")
+  status            StockReservationStatus       @default(ACTIVE)
+  createdById       String                       @map("created_by_id")
+  releaseReason     String?                      @map("release_reason")
+  createdAt         DateTime                     @default(now()) @map("created_at")
+  updatedAt         DateTime                     @updatedAt @map("updated_at")
+  request           StockRequest                 @relation(fields: [stockRequestId], references: [id], onDelete: Cascade)
+  createdBy         User                         @relation("CreatedReservations", fields: [createdById], references: [id])
+  allocations       StockReservationAllocation[]
+  auditEvents       ReservationAuditEvent[]
+  shipmentTasks     InventoryTask[]               @relation("ShipmentTasks")
+
+  @@index([status, createdAt])
+  @@index([stockRequestId])
+  @@map("stock_reservations")
+}
+
+model StockReservationAllocation {
+  id               String           @id @default(uuid())
+  reservationId    String           @map("reservation_id")
+  requestLineId    String           @map("request_line_id")
+  productId        String           @map("product_id")
+  locationId       String           @map("location_id")
+  quantity         Int
+  shippedQuantity  Int              @default(0) @map("shipped_quantity")
+  releasedQuantity Int              @default(0) @map("released_quantity")
+  reservation      StockReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  requestLine      StockRequestLine @relation(fields: [requestLineId], references: [id], onDelete: Cascade)
+  product          Product          @relation(fields: [productId], references: [id])
+  location         Location         @relation(fields: [locationId], references: [id])
+
+  @@index([reservationId])
+  @@index([productId, locationId])
+  @@map("stock_reservation_allocations")
+}
+
+model ReservationAuditEvent {
+  id             String            @id @default(uuid())
+  stockRequestId String            @map("stock_request_id")
+  reservationId  String?           @map("reservation_id")
+  action         String
+  details        String?
+  actorId        String            @map("actor_id")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  stockRequest   StockRequest      @relation(fields: [stockRequestId], references: [id], onDelete: Cascade)
+  reservation    StockReservation? @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  actor          User              @relation(fields: [actorId], references: [id])
+
+  @@index([stockRequestId, createdAt])
+  @@index([reservationId, createdAt])
+  @@map("reservation_audit_events")
+}
+
+model InventoryTransaction {
+  id                        String                  @id @default(uuid())
+  clientRequestId           String?                 @unique
+  action                    InventoryAction
+  status                    TransactionStatus       @default(PENDING)
+  productId                 String
+  quantity                  Int
+  condition                 StockCondition          @default(GOOD)
+  sourceLocationSource      LocationSource?         @map("source_location_source")
+  destinationLocationSource LocationSource?         @map("destination_location_source")
+  sourceLocationId          String?
+  destinationLocationId     String?
+  referenceNumber           String?
+  notes                     String?
+  reviewNotes               String?
+  reviewReasons             String?
+  transcript                String?
+  systemQuantityBefore      Int?                    @map("system_quantity_before")
+  systemQuantityAfter       Int?                    @map("system_quantity_after")
+  discrepancyDifference     Int?                    @map("discrepancy_difference")
+  discrepancyPercentage     Float?                  @map("discrepancy_percentage")
+  significantDiscrepancy    Boolean                 @default(false) @map("significant_discrepancy")
+  createdById               String?
+  approvedById              String?
+  createdAt                 DateTime                @default(now())
+  confirmedAt               DateTime?
+  approvedAt                DateTime?
+  postedAt                  DateTime?
+  product                   Product                 @relation(fields: [productId], references: [id])
+  sourceLocation            Location?               @relation("SourceLocationTransactions", fields: [sourceLocationId], references: [id])
+  destinationLocation       Location?               @relation("DestinationLocationTransactions", fields: [destinationLocationId], references: [id])
+  createdBy                 User?                   @relation("CreatedTransactions", fields: [createdById], references: [id])
+  approvedBy                User?                   @relation("ApprovedTransactions", fields: [approvedById], references: [id])
+  voiceEvidence             VoiceEvidence[]
+  task                      InventoryTask?
+  recountTaskId             String?
+  recountTask               InventoryTask?          @relation("RecountTaskTransactions", fields: [recountTaskId], references: [id])
+  discrepancy               Discrepancy?
+  resolutionDiscrepancy     Discrepancy?            @relation("ResolutionDiscrepancies")
+  evidence                  DiscrepancyEvidence[]   @relation("TransactionEvidence")
+  auditEvents               DiscrepancyAuditEvent[] @relation("TransactionAuditEvents")
+
+  @@index([productId, createdAt])
+  @@index([status, createdAt])
+  @@index([significantDiscrepancy, createdAt])
+  @@index([recountTaskId])
+  @@map("inventory_transactions")
+}
+
+enum TaskType {
+  RECOUNT
+  CYCLE_COUNT
+  RECEIVE
+  PICK
+  SHIP
+  TRANSFER
+  STOCK_VERIFY
+  DAMAGE_INSPECTION
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model ShipmentReferenceCounter {
+  id        Int   @id
+  lastValue Int   @default(0) @map("last_value")
+
+  @@map("shipment_reference_counters")
+}
+
+model InventoryTask {
+  id                        String                 @id @default(uuid())
+  type                      TaskType
+  priority                  TaskPriority           @default(MEDIUM)
+  status                    TaskStatus             @default(OPEN)
+  title                     String
+  description               String?
+  dueAt                     DateTime?
+  assignedToId              String?
+  productId                 String?
+  locationId                String?
+  quantity                  Int?
+  sourceLocationId          String?
+  destinationLocationId     String?
+  cycleCountPlanId          String?
+  sourceTransactionId       String?                @unique
+  createdAt                 DateTime               @default(now())
+  startedAt                 DateTime?
+  completedAt               DateTime?
+  assignedTo                User?                  @relation("AssignedTasks", fields: [assignedToId], references: [id])
+  product                   Product?               @relation(fields: [productId], references: [id])
+  location                  Location?              @relation("TaskLocation", fields: [locationId], references: [id])
+  sourceLocation            Location?              @relation("TaskSourceLocation", fields: [sourceLocationId], references: [id])
+  destinationLocation       Location?              @relation("TaskDestinationLocation", fields: [destinationLocationId], references: [id])
+  cycleCountPlan            CycleCountPlan?        @relation(fields: [cycleCountPlanId], references: [id], onDelete: SetNull)
+  sourceTransaction         InventoryTransaction?  @relation(fields: [sourceTransactionId], references: [id])
+  recountResultTransactions InventoryTransaction[] @relation("RecountTaskTransactions")
+  discrepancies             Discrepancy[]          @relation("RecountTaskDiscrepancies")
+  reservationId             String?                @map("reservation_id")
+  reservation               StockReservation?      @relation("ShipmentTasks", fields: [reservationId], references: [id], onDelete: SetNull)
+  shipmentReference         String?                @map("shipment_reference")
+  preparedById              String?                @map("prepared_by_id")
+  preparedBy                User?                  @relation("PreparedShipments", fields: [preparedById], references: [id])
+
+  @@index([assignedToId, status, dueAt])
+  @@index([status, priority, dueAt])
+  @@index([sourceLocationId])
+  @@index([destinationLocationId])
+  @@index([cycleCountPlanId, status])
+  @@index([reservationId, status])
+  @@map("inventory_tasks")
+}
+
+model CycleCountPlan {
+  id           String          @id @default(uuid())
+  planNumber   String          @unique
+  title        String
+  periodMonth  String          @map("period_month")
+  priority     TaskPriority    @default(MEDIUM)
+  dueAt        DateTime?
+  blindCount   Boolean         @default(true)
+  assignedToId String
+  createdAt    DateTime        @default(now())
+  assignedTo   User            @relation(fields: [assignedToId], references: [id])
+  tasks        InventoryTask[]
+
+  @@index([assignedToId, createdAt])
+  @@map("cycle_count_plans")
+}
+
+model Discrepancy {
+  id                      String              @id @default(uuid())
+  caseNumber              String              @unique
+  transactionId           String              @unique
+  productId               String
+  locationId              String
+  expectedQuantity        Int
+  countedQuantity         Int
+  differenceQuantity      Int
+  differencePercentage    Float
+  severity                DiscrepancySeverity
+  severityRule            String?
+  status                  DiscrepancyStatus   @default(AWAITING_REVIEW)
+  reasonCode              DiscrepancyReason   @default(COUNT_DIFFERENCE)
+  workerNotes             String?
+  managerNotes            String?
+  workerId                String?
+  assignedManagerId       String?
+  recountTaskId           String?             @unique
+  resolutionTransactionId String?             @unique
+  resolvedById            String?
+  resolvedAt              DateTime?
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+
+  transaction           InventoryTransaction    @relation(fields: [transactionId], references: [id])
+  product               Product                 @relation(fields: [productId], references: [id])
+  location              Location                @relation(fields: [locationId], references: [id])
+  worker                User?                   @relation("WorkerDiscrepancies", fields: [workerId], references: [id])
+  assignedManager       User?                   @relation("ManagerDiscrepancies", fields: [assignedManagerId], references: [id])
+  recountTask           InventoryTask?          @relation("RecountTaskDiscrepancies", fields: [recountTaskId], references: [id])
+  resolutionTransaction InventoryTransaction?   @relation("ResolutionDiscrepancies", fields: [resolutionTransactionId], references: [id])
+  resolvedBy            User?                   @relation("ResolverDiscrepancies", fields: [resolvedById], references: [id])
+  evidence              DiscrepancyEvidence[]
+  auditEvents           DiscrepancyAuditEvent[]
+
+  @@index([productId, createdAt])
+  @@index([locationId, createdAt])
+  @@index([workerId, status])
+  @@index([severity, status])
+  @@index([status, createdAt])
+  @@map("discrepancies")
+}
+
+model DiscrepancyEvidence {
+  id               String                  @id @default(uuid())
+  discrepancyId    String?
+  transactionId    String?
+  storageKey       String                  @unique
+  originalFilename String
+  mimeType         String
+  sizeBytes        Int
+  uploadedById     String
+  createdAt        DateTime                @default(now())
+  discrepancy      Discrepancy?            @relation(fields: [discrepancyId], references: [id], onDelete: Cascade)
+  transaction      InventoryTransaction?   @relation("TransactionEvidence", fields: [transactionId], references: [id], onDelete: Cascade)
+  uploadedBy       User                    @relation("EvidenceUploaders", fields: [uploadedById], references: [id])
+  auditEvents      DiscrepancyAuditEvent[]
+
+  @@index([discrepancyId, createdAt])
+  @@index([transactionId, createdAt])
+  @@index([uploadedById, createdAt])
+  @@map("discrepancy_evidence")
+}
+
+model DiscrepancyAuditEvent {
+  id                 String                 @id @default(uuid())
+  discrepancyId      String
+  caseNumber         String
+  action             DiscrepancyAuditAction
+  previousStatus     String?
+  newStatus          String?
+  expectedQuantity   Int?
+  countedQuantity    Int?
+  differenceQuantity Int?
+  severityRule       String?
+  previousStock      Int?
+  newStock           Int?
+  actorWorkerId      String?
+  actorManagerId     String?
+  reason             String?
+  transactionId      String?
+  evidenceId         String?
+  rawTranscript      String?
+  aiValues           String?
+  createdAt          DateTime               @default(now())
+  discrepancy        Discrepancy            @relation(fields: [discrepancyId], references: [id], onDelete: Cascade)
+  actorWorker        User?                  @relation("AuditWorkerEvents", fields: [actorWorkerId], references: [id])
+  actorManager       User?                  @relation("AuditManagerEvents", fields: [actorManagerId], references: [id])
+  transaction        InventoryTransaction?  @relation("TransactionAuditEvents", fields: [transactionId], references: [id], onDelete: SetNull)
+  evidence           DiscrepancyEvidence?   @relation(fields: [evidenceId], references: [id], onDelete: SetNull)
+
+  @@index([discrepancyId, createdAt])
+  @@index([action, createdAt])
+  @@index([actorWorkerId, createdAt])
+  @@index([actorManagerId, createdAt])
+  @@map("discrepancy_audit_events")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  linkType  String?
+  linkId    String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+  user      User             @relation(fields: [userId], references: [id])
+
+  @@index([userId, readAt, createdAt])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model VoiceEvidence {
+  id                  String                @id @default(uuid())
+  storageKey          String                @unique
+  originalFilename    String
+  mimeType            String
+  sizeBytes           Int
+  transcript          String
+  language            String?
+  languageProbability Float?
+  duration            Float?
+  createdById         String
+  transactionId       String?
+  createdAt           DateTime              @default(now())
+  createdBy           User                  @relation(fields: [createdById], references: [id])
+  transaction         InventoryTransaction? @relation(fields: [transactionId], references: [id])
+
+  @@index([createdById, createdAt])
+  @@index([transactionId])
+  @@map("voice_evidence")
+}
+
+model ReorderDraft {
+  id                String        @id @default(uuid())
+  activeKey         String?       @unique
+  productId         String
+  locationId        String
+  currentStock      Int
+  safetyStock       Int
+  suggestedQuantity Int
+  status            ReorderStatus @default(DRAFT)
+  reviewNotes       String?
+  cancelledAt       DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  product           Product       @relation(fields: [productId], references: [id])
+  location          Location      @relation(fields: [locationId], references: [id])
+
+  @@index([status, createdAt])
+  @@map("reorder_drafts")
+}
+
+model Supplier {
+  id                   String    @id @default(uuid())
+  code                 String    @unique
+  name                 String
+  contactName          String?
+  email                String?
+  phone                String?
+  address              String?
+  leadTimeDays         Int       @default(0)
+  minimumOrderQuantity Int       @default(0)
+  active               Boolean   @default(true)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  products             Product[]
+
+  @@map("suppliers")
+}

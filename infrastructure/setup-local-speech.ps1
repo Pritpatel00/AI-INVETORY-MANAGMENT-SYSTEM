@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$speechDirectory = Join-Path $projectRoot "services\speech"
+$speechDirectory = Join-Path $projectRoot "backend\speech"
 $packageDirectory = Join-Path $speechDirectory ".python-packages"
 $bundledPython = "C:\Users\Prit Patel\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
 $systemPython = Get-Command python -ErrorAction SilentlyContinue

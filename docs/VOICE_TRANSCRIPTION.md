@@ -17,31 +17,37 @@ ledger unchanged.
    change inventory.
 5. The worker stops the recording.
 6. The web application uploads the audio with the worker's access token.
-6. The NestJS API checks the token and Worker role.
-7. The API stores the audio as evidence.
-8. The API sends the audio to the local faster-whisper service.
-9. Whisper returns the transcript, language, confidence and duration.
-10. The API saves this metadata in PostgreSQL and returns it to the web page.
-11. If clear speech was detected, AI extraction starts automatically.
-12. The worker reviews the extracted values and can select **Edit transcript**
+7. The NestJS API checks the token and Warehouse Executive role.
+8. The API stores the audio as evidence.
+9. The API sends the audio to the local faster-whisper service.
+10. Whisper returns the transcript, language, confidence and duration.
+11. The API saves this metadata in PostgreSQL and returns it to the web page.
+12. If clear speech was detected, AI extraction starts automatically.
+13. The worker reviews the extracted values and can select **Edit transcript**
     to correct and reprocess the text.
+
+When the worker starts from a quick-action card, that selected workflow is
+trusted context. The AI still extracts the item, quantity and locations, but a
+minor speech error cannot change a selected Cycle Count into Ship, for example.
+Within combined cards, the worker's words select Ship versus Use and Damage
+versus Loss.
 
 For a short answer to a clarification question, the browser sends an English
 language hint to Whisper. This reduces incorrect language detection on
 one- or two-word warehouse answers. The original full inventory statement keeps
 automatic language detection.
 
-Known location pronunciation variants are matched only against active
-PostgreSQL warehouse locations. For example, “Shelby” and “self B” can resolve
-to **Shelf B**. An unrelated answer remains unresolved and the location question
-is asked again.
+Locations are matched only against active PostgreSQL warehouse locations.
+For Receive, the worker can omit the destination and the system automatically
+uses **Receiving**. If a required location cannot be matched for another action,
+the AI asks only for that missing detail.
 
 ## Safety boundary
 
 Speech recognition only produces text. It cannot receive, ship, transfer,
-count, damage or remove stock. A future AI extraction step will propose
-structured fields, and the existing confirmation and business-rule engine will
-control any inventory update.
+count, damage or remove stock. AI extraction proposes structured fields, and
+Warehouse Executive confirmation plus fixed business rules control every
+inventory update.
 
 ## Live transcript preview
 
@@ -61,11 +67,11 @@ impact on the inventory ledger.
 
 | Service | Local address | Responsibility |
 |---|---|---|
-| Web application | `http://localhost:3002` | Records audio and shows editable text |
+| Web application | `http://localhost:3000` | Records audio and shows editable text |
 | NestJS API | `http://localhost:4000/api` | Authenticates, stores evidence and proxies audio |
 | Speech service | `http://127.0.0.1:5001` | Runs faster-whisper locally |
 | Keycloak | `http://localhost:8080` | Login, tokens and roles |
-| PostgreSQL | `localhost:5433` | Voice evidence metadata and inventory data |
+| PostgreSQL | `localhost:5434` | Voice evidence metadata and inventory data |
 
 ## Storage
 
@@ -80,15 +86,24 @@ machine-specific runtime data and warehouse evidence.
 
 Input:
 
-> Received five units of item four zero two at shelf B from supplier X.
+> Received five units of Cable.
 
 Local Whisper transcript:
 
-> Received five units of item 402 at shelf B from supplier X.
+> Receive five units of cable into Receiving.
 
-The authenticated verification confirmed that the transcript, evidence file
-and database record were created and that the temporary test-only login setting
-was restored to disabled.
+The authenticated verification confirmed that Whisper recognized the current
+one-word product. The full Playwright voice test also confirms that Qwen matches
+Cable and the destination spoken by the worker, posts the validated Receive
+transaction and restores the original test balance. If the destination is not
+spoken, the system asks only “Where did you place the received stock?” and does
+not create or post a transaction until the answer is supplied and confirmed.
+
+The complete browser matrix also checks Ship, Use, Transfer, matching and
+different Cycle Counts, Damage, Loss and a missing-location clarification.
+Approved speech variants are matched only when they identify one unique active
+location. For example, common Whisper variants of Dispatch such as “spatch” or
+“this patch” are safely normalized to Dispatch.
 
 ## Transcription speed
 

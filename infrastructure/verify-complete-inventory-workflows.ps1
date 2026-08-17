@@ -170,7 +170,7 @@ try {
         $lowBalance -and
         $_.product.id -eq $lowBalance.product.id -and
         $_.location.id -eq $lowBalance.location.id -and
-        $_.status -in @("DRAFT", "APPROVED", "SENT")
+        $_.status -in @("DRAFT", "APPROVED")
     })[0]
     $checks.lowStockDraftExists =
         [bool]$lowBalance -and

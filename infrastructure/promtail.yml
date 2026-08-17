@@ -1,6 +1,6 @@
 # Ships ONLY the API process logs (job nirka-inventory-api) to Loki.
 # The API runs on the host machine; its stdout is redirected to
-# services/api/logs/api.log, bind-mounted read-only at /var/log/api.
+# backend/api/logs/api.log, bind-mounted read-only at /var/log/api.
 #
 # Future work (deliberately NOT wired up yet): correlate Stage 1 OTel trace
 # IDs with these log lines using promtail's structured-metadata / derived
