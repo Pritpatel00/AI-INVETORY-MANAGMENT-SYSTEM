@@ -27,6 +27,7 @@ function createService(
   expectedQuantity: number,
   countedQuantity: number,
   recountTaskId: string | null = null,
+  taskId: string | null = null,
 ) {
   const user = {
     id: "worker-id",
@@ -66,6 +67,7 @@ function createService(
     notes: null,
     transcript: "Cycle count Helmet",
     recountTaskId,
+    taskId,
     product,
     sourceLocation,
     destinationLocation: null,
@@ -303,5 +305,46 @@ describe("InventoryService cycle-count confirmation", () => {
     // No new discrepancy case is created for the matching recount.
     expect(context.discrepancies.createForCycleCount).not.toHaveBeenCalled();
     expect(context.discrepancy.update).toHaveBeenCalledTimes(1);
+  });
+
+  test("completes the linked Month-End Cycle Count task when the count matches", async () => {
+    const context = createService(100, 100, null, "count-task-id");
+
+    const result = await context.service.confirmTransaction(
+      context.transaction.id,
+      actor,
+    );
+
+    expect(result.outcome).toBe("POSTED");
+    // The assigned cycle-count task is completed atomically with the posted
+    // count so it leaves the worker's open-task queue.
+    expect(context.inventoryTask.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "count-task-id" },
+        data: expect.objectContaining({ status: "COMPLETED" }),
+      }),
+    );
+    expect(context.discrepancies.createForCycleCount).not.toHaveBeenCalled();
+  });
+
+  test("completes the linked task and creates a discrepancy when the count differs", async () => {
+    const context = createService(0, 100, null, "count-task-id");
+
+    const result = await context.service.confirmTransaction(
+      context.transaction.id,
+      actor,
+    );
+
+    expect(result.outcome).toBe("PENDING_REVIEW");
+    // The count is finished even though it goes to manager review, so the
+    // task disappears from the worker queue while the case waits for review.
+    expect(context.inventoryTask.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "count-task-id" },
+        data: expect.objectContaining({ status: "COMPLETED" }),
+      }),
+    );
+    expect(context.discrepancies.createForCycleCount).toHaveBeenCalled();
+    expect(context.inventoryBalance.upsert).not.toHaveBeenCalled();
   });
 });

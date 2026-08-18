@@ -1,5 +1,5 @@
 import { TaskPriority } from "@prisma/client";
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, IsOptional, IsString, IsUUID, Matches } from "class-validator";
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, IsOptional, IsString, IsUUID, Matches, MaxLength } from "class-validator";
 
 export class CreateCycleCountPlanDto {
   @IsString()
@@ -25,4 +25,9 @@ export class CreateCycleCountPlanDto {
   @IsOptional()
   @IsBoolean()
   blindCount?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  instructions?: string;
 }

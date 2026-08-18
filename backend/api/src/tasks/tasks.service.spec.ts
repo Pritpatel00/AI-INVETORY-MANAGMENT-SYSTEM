@@ -213,71 +213,283 @@ describe("TasksService shipment reassignment", () => {
   });
 });
 
+interface PlanBalance {
+  productId: string;
+  locationId: string;
+  quantity: number;
+  product: { name: string };
+  location: { name: string; code: string };
+}
+
+/** A future month-end 5:00 PM due date that stays valid whenever the suite runs. */
+function futureMonthEnd(offsetMonths = 1) {
+  const now = new Date();
+  const targetMonth = now.getMonth() + offsetMonths;
+  const year = now.getFullYear() + Math.floor(targetMonth / 12);
+  const month = ((targetMonth % 12) + 12) % 12;
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const periodMonth = `${year}-${String(month + 1).padStart(2, "0")}`;
+  return {
+    periodMonth,
+    dueAt: `${periodMonth}-${String(lastDay).padStart(2, "0")}T17:00:00.000Z`,
+  };
+}
+
+function planPrismaMock(overrides: {
+  worker?: { id: string; employeeId: string; displayName: string; role: UserRole; active: boolean } | null;
+  locations?: Array<{ id: string; name: string }>;
+  balances?: PlanBalance[];
+  existingTasks?: Array<{ productId: string; locationId: string }>;
+  createdTasks?: Array<{ id: string; productId: string; locationId: string; status: TaskStatus }>;
+  existingPlan?: Record<string, unknown> | null;
+  plans?: Array<Record<string, unknown>>;
+  discrepancies?: Array<{ transaction: { taskId: string } | null }>;
+} = {}) {
+  const createMany = jest.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length }));
+  const createPlan = jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "plan-1", ...data }));
+  const notificationCreate = jest.fn(async () => ({}));
+  const prisma = {
+    cycleCountPlan: {
+      findUnique: jest.fn(async () => overrides.existingPlan ?? null),
+      findMany: jest.fn(async () => overrides.plans ?? []),
+    },
+    user: {
+      findFirst: jest.fn(async () =>
+        "worker" in overrides
+          ? overrides.worker
+          : { id: "worker-1", employeeId: "W1", displayName: "Worker One", role: UserRole.WORKER, active: true },
+      ),
+    },
+    location: {
+      findMany: jest.fn(async () =>
+        overrides.locations ?? [{ id: "loc-1", name: "Storage 1" }],
+      ),
+    },
+    inventoryBalance: {
+      findMany: jest.fn(async () =>
+        overrides.balances ?? [
+          { productId: "product-1", locationId: "loc-1", quantity: 10, product: { name: "Cable" }, location: { name: "Storage 1", code: "L001" } },
+        ],
+      ),
+    },
+    inventoryTask: { findMany: jest.fn(async () => overrides.existingTasks ?? []) },
+    discrepancy: { findMany: jest.fn(async () => overrides.discrepancies ?? []) },
+    $transaction: jest.fn(async (callback: (database: unknown) => Promise<unknown>) =>
+      callback({
+        cycleCountPlan: { create: createPlan },
+        inventoryTask: {
+          createMany,
+          findMany: jest.fn(async () => overrides.createdTasks ?? []),
+        },
+        notification: { create: notificationCreate },
+      }),
+    ),
+  } as unknown as PrismaService;
+  const notifications = { createForUser: jest.fn(async () => ({})) } as unknown as NotificationsService;
+  const service = new TasksService(prisma, undefined as never, notifications);
+  return { prisma, service, createMany, createPlan, notificationCreate, notifications };
+}
+
 describe("TasksService cycle-count plans", () => {
   it("creates one task per stocked item and location in one transaction", async () => {
-    const createPlan = jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "plan-1", ...data }));
-    const createMany = jest.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length }));
-    const createdTasks = [
-      { id: "task-1", productId: "product-1", locationId: "loc-1" },
-      { id: "task-2", productId: "product-2", locationId: "loc-2" },
-    ];
-    const prisma = {
-      user: { findFirst: jest.fn(async () => ({ id: "worker-1", role: UserRole.WORKER, active: true })) },
-      location: { findMany: jest.fn(async () => [{ id: "loc-1", name: "Dispatch" }, { id: "loc-2", name: "Packing" }]) },
-      inventoryBalance: { findMany: jest.fn(async () => [
-        { productId: "product-1", locationId: "loc-1", quantity: 10, product: { name: "Cable" }, location: { name: "Dispatch", code: "L001" } },
-        { productId: "product-2", locationId: "loc-2", quantity: 20, product: { name: "Helmet" }, location: { name: "Packing", code: "L002" } },
-      ]) },
-      inventoryTask: { findMany: jest.fn(async () => []) },
-      $transaction: jest.fn(async (callback: (database: unknown) => Promise<unknown>) => callback({
-        cycleCountPlan: { create: createPlan },
-        inventoryTask: { createMany, findMany: jest.fn(async () => createdTasks) },
-      })),
-    } as unknown as PrismaService;
-    const service = createService(prisma);
+    const { service, createMany, notifications } = planPrismaMock({
+      locations: [{ id: "loc-1", name: "Storage 1" }, { id: "loc-2", name: "Storage 2" }],
+      balances: [
+        { productId: "product-1", locationId: "loc-1", quantity: 10, product: { name: "Cable" }, location: { name: "Storage 1", code: "L001" } },
+        { productId: "product-2", locationId: "loc-1", quantity: 20, product: { name: "Helmet" }, location: { name: "Storage 1", code: "L001" } },
+        { productId: "product-3", locationId: "loc-2", quantity: 30, product: { name: "Box" }, location: { name: "Storage 2", code: "L002" } },
+      ],
+      createdTasks: [
+        { id: "task-1", productId: "product-1", locationId: "loc-1", status: TaskStatus.OPEN },
+        { id: "task-2", productId: "product-2", locationId: "loc-1", status: TaskStatus.OPEN },
+        { id: "task-3", productId: "product-3", locationId: "loc-2", status: TaskStatus.OPEN },
+      ],
+    });
+    const { periodMonth, dueAt } = futureMonthEnd();
 
     const result = await service.createCycleCountPlan({
-      periodMonth: "2026-08",
+      periodMonth,
       locationIds: ["loc-1", "loc-2"],
       assignedToId: "worker-1",
       priority: TaskPriority.MEDIUM,
       blindCount: true,
+      dueAt,
+      instructions: "Use the red scanner.",
     });
 
-    expect(createPlan).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ periodMonth: "2026-08" }) }));
-    expect(createMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.arrayContaining([
-      expect.objectContaining({ productId: "product-1", locationId: "loc-1", cycleCountPlanId: "plan-1" }),
-      expect.objectContaining({ productId: "product-2", locationId: "loc-2", cycleCountPlanId: "plan-1" }),
-    ]) }));
-    expect(result.createdTasks).toBe(2);
+    expect(result.createdTasks).toBe(3);
     expect(result.selectedLocations).toBe(2);
+    expect(result.idempotent).toBe(false);
+    expect(result.instructions).toBe("Use the red scanner.");
+    expect(createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.arrayContaining([
+          expect.objectContaining({ productId: "product-1", locationId: "loc-1", cycleCountPlanId: "plan-1", periodMonth }),
+          expect.objectContaining({ productId: "product-2", locationId: "loc-1", cycleCountPlanId: "plan-1", periodMonth }),
+          expect.objectContaining({ productId: "product-3", locationId: "loc-2", cycleCountPlanId: "plan-1", periodMonth }),
+        ]),
+      }),
+    );
+    // The assigned Warehouse Executive is notified about the new plan.
+    expect(notifications.createForUser).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: "worker-1",
+        type: "CYCLE_COUNT_PLAN_ASSIGNED",
+      }),
+    );
   });
 
-  it("skips item-location pairs that already have an open count", async () => {
-    const createMany = jest.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length }));
-    const prisma = {
-      user: { findFirst: jest.fn(async () => ({ id: "worker-1" })) },
-      location: { findMany: jest.fn(async () => [{ id: "loc-1", name: "Dispatch" }]) },
-      inventoryBalance: { findMany: jest.fn(async () => [
-        { productId: "product-1", locationId: "loc-1", quantity: 10, product: { name: "Cable" }, location: { name: "Dispatch", code: "L001" } },
-        { productId: "product-2", locationId: "loc-1", quantity: 20, product: { name: "Helmet" }, location: { name: "Dispatch", code: "L001" } },
-      ]) },
-      inventoryTask: { findMany: jest.fn(async () => [{ productId: "product-1", locationId: "loc-1" }]) },
-      $transaction: jest.fn(async (callback: (database: unknown) => Promise<unknown>) => callback({
-        cycleCountPlan: { create: jest.fn(async ({ data }: { data: object }) => ({ id: "plan-1", ...data })) },
-        inventoryTask: { createMany, findMany: jest.fn(async () => [{ id: "task-2" }]) },
-      })),
-    } as unknown as PrismaService;
-    const service = createService(prisma);
+  it("stores a deterministic request key on the plan and notifies the assigned worker", async () => {
+    const { service, createPlan, notifications } = planPrismaMock({
+      createdTasks: [{ id: "task-1", productId: "product-1", locationId: "loc-1", status: TaskStatus.OPEN }],
+    });
+    const { periodMonth, dueAt } = futureMonthEnd();
 
-    const result = await service.createCycleCountPlan({ periodMonth: "2026-08", locationIds: ["loc-1"], assignedToId: "worker-1", priority: TaskPriority.HIGH });
+    const result = await service.createCycleCountPlan({
+      periodMonth,
+      locationIds: ["loc-1"],
+      assignedToId: "worker-1",
+      priority: TaskPriority.MEDIUM,
+      dueAt,
+      blindCount: true,
+    });
+
+    expect(createPlan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          periodMonth,
+          requestKey: expect.any(String),
+        }),
+      }),
+    );
+    expect(notifications.createForUser).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: "worker-1",
+        type: "CYCLE_COUNT_PLAN_ASSIGNED",
+        linkType: "task",
+        linkId: "plan-1",
+      }),
+    );
+    expect(result.idempotent).toBe(false);
+  });
+
+  it("only queries stocked items and never generates tasks for zero quantity", async () => {
+    const { service, prisma, createMany } = planPrismaMock({
+      balances: [
+        { productId: "product-1", locationId: "loc-1", quantity: 10, product: { name: "Cable" }, location: { name: "Storage 1", code: "L001" } },
+      ],
+      createdTasks: [{ id: "task-1", productId: "product-1", locationId: "loc-1", status: TaskStatus.OPEN }],
+    });
+    const { periodMonth } = futureMonthEnd();
+
+    const result = await service.createCycleCountPlan({
+      periodMonth,
+      locationIds: ["loc-1"],
+      assignedToId: "worker-1",
+      priority: TaskPriority.MEDIUM,
+    });
+
+    // The balance query is scoped to on-hand quantity greater than zero, so a
+    // zero-quantity item-location record can never produce a task.
+    expect(prisma.inventoryBalance.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ quantity: { gt: 0 } }),
+      }),
+    );
+    expect(result.createdTasks).toBe(1);
+    const data = createMany.mock.calls[0][0] as { data: Array<{ productId: string }> };
+    expect(data.data).toHaveLength(1);
+    expect(data.data[0].productId).toBe("product-1");
+  });
+
+  it("rejects a selected location with no stocked items", async () => {
+    const { service } = planPrismaMock({
+      locations: [{ id: "loc-1", name: "Storage 1" }, { id: "loc-2", name: "Empty Storage" }],
+      balances: [
+        { productId: "product-1", locationId: "loc-1", quantity: 10, product: { name: "Cable" }, location: { name: "Storage 1", code: "L001" } },
+      ],
+    });
+    const { periodMonth } = futureMonthEnd();
+
+    await expect(
+      service.createCycleCountPlan({
+        periodMonth,
+        locationIds: ["loc-1", "loc-2"],
+        assignedToId: "worker-1",
+        priority: TaskPriority.MEDIUM,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("skips item-location pairs that already have a task for the same period", async () => {
+    const { service } = planPrismaMock({
+      balances: [
+        { productId: "product-1", locationId: "loc-1", quantity: 10, product: { name: "Cable" }, location: { name: "Storage 1", code: "L001" } },
+        { productId: "product-2", locationId: "loc-1", quantity: 20, product: { name: "Helmet" }, location: { name: "Storage 1", code: "L001" } },
+      ],
+      existingTasks: [{ productId: "product-1", locationId: "loc-1" }],
+      createdTasks: [{ id: "task-2", productId: "product-2", locationId: "loc-1", status: TaskStatus.OPEN }],
+    });
+    const { periodMonth } = futureMonthEnd();
+
+    const result = await service.createCycleCountPlan({
+      periodMonth,
+      locationIds: ["loc-1"],
+      assignedToId: "worker-1",
+      priority: TaskPriority.HIGH,
+    });
 
     expect(result.createdTasks).toBe(1);
     expect(result.skippedDuplicates).toBe(1);
   });
 
+  it("returns the existing plan unchanged when the exact same request repeats", async () => {
+    const existingPlan = {
+      id: "plan-existing",
+      planNumber: "CC-20260818-1234-ABCD",
+      title: "September 2026 cycle count — Storage 1",
+      periodMonth: "2026-09",
+      priority: TaskPriority.MEDIUM,
+      dueAt: null,
+      blindCount: true,
+      assignedToId: "worker-1",
+      createdAt: new Date("2026-08-18T00:00:00.000Z"),
+      assignedTo: { id: "worker-1", employeeId: "W1", displayName: "Worker One" },
+      tasks: [{ id: "task-1", productId: "product-1", locationId: "loc-1", status: TaskStatus.OPEN }],
+    };
+    const { service } = planPrismaMock({ existingPlan });
+
+    const result = await service.createCycleCountPlan({
+      periodMonth: "2026-09",
+      locationIds: ["loc-1"],
+      assignedToId: "worker-1",
+      priority: TaskPriority.MEDIUM,
+      blindCount: true,
+    });
+
+    expect(result.idempotent).toBe(true);
+    expect(result.id).toBe("plan-existing");
+    expect(result.createdTasks).toBe(1);
+  });
+
+  it("rejects an inactive or non-worker assignee", async () => {
+    const { service } = planPrismaMock({ worker: null });
+    const { periodMonth } = futureMonthEnd();
+
+    await expect(
+      service.createCycleCountPlan({
+        periodMonth,
+        locationIds: ["loc-1"],
+        assignedToId: "manager-1",
+        priority: TaskPriority.MEDIUM,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
   it("rejects a due date outside the selected monthly count period", async () => {
-    const service = createService({} as PrismaService);
+    const { service } = planPrismaMock();
 
     await expect(service.createCycleCountPlan({
       periodMonth: "2026-08",
@@ -286,5 +498,117 @@ describe("TasksService cycle-count plans", () => {
       priority: TaskPriority.MEDIUM,
       dueAt: "2026-09-01T17:00:00.000Z",
     })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("rejects a past due date", async () => {
+    const { service } = planPrismaMock();
+
+    await expect(service.createCycleCountPlan({
+      periodMonth: "2020-01",
+      locationIds: ["loc-1"],
+      assignedToId: "worker-1",
+      priority: TaskPriority.MEDIUM,
+      dueAt: "2020-01-15T17:00:00.000Z",
+    })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("builds blind-count task descriptions carrying the instructions", async () => {
+    const { service, createMany } = planPrismaMock({
+      createdTasks: [{ id: "task-1", productId: "product-1", locationId: "loc-1", status: TaskStatus.OPEN }],
+    });
+    const { periodMonth } = futureMonthEnd();
+
+    await service.createCycleCountPlan({
+      periodMonth,
+      locationIds: ["loc-1"],
+      assignedToId: "worker-1",
+      priority: TaskPriority.MEDIUM,
+      blindCount: true,
+      instructions: "Count twice.",
+    });
+
+    const data = createMany.mock.calls[0][0] as { data: Array<{ description: string }> };
+    expect(data.data[0].description).toContain("Blind count");
+    expect(data.data[0].description).toContain("Instructions: Count twice.");
+  });
+
+  it("lists plans with task statistics and discrepancy counts", async () => {
+    const { service } = planPrismaMock({
+      plans: [
+        {
+          id: "plan-1",
+          planNumber: "CC-0001",
+          title: "September 2026 cycle count",
+          periodMonth: "2026-09",
+          priority: TaskPriority.MEDIUM,
+          dueAt: null,
+          blindCount: true,
+          assignedToId: "worker-1",
+          createdAt: new Date(),
+          assignedTo: { id: "worker-1", employeeId: "W1", displayName: "Worker One" },
+          tasks: [
+            { id: "task-1", status: TaskStatus.OPEN, location: { id: "loc-1", code: "L001", name: "Storage 1" } },
+            { id: "task-2", status: TaskStatus.COMPLETED, location: { id: "loc-1", code: "L001", name: "Storage 1" } },
+            { id: "task-3", status: TaskStatus.COMPLETED, location: { id: "loc-2", code: "L002", name: "Storage 2" } },
+          ],
+        },
+      ],
+      discrepancies: [
+        { transaction: { taskId: "task-1" } },
+        { transaction: { taskId: "task-1" } },
+      ],
+    });
+
+    const plans = await service.listCycleCountPlans();
+
+    expect(plans).toHaveLength(1);
+    const plan = plans[0];
+    expect(plan.totalTasks).toBe(3);
+    expect(plan.openTasks).toBe(1);
+    expect(plan.completedTasks).toBe(2);
+    expect(plan.discrepancyCount).toBe(2);
+    expect(plan.status).toBe("OPEN");
+    expect(plan.locations).toHaveLength(2);
+  });
+
+  it("returns one plan with every generated task and linked discrepancies", async () => {
+    const { service } = planPrismaMock({
+      plans: [],
+      discrepancies: [
+        { transaction: { taskId: "task-1" } },
+        { transaction: { taskId: "task-1" } },
+      ],
+    });
+    // getCycleCountPlan uses findUnique (not the mock's findMany override).
+    const plan = {
+      id: "plan-1",
+      planNumber: "CC-0001",
+      title: "September 2026 cycle count",
+      periodMonth: "2026-09",
+      priority: TaskPriority.MEDIUM,
+      dueAt: null,
+      blindCount: false,
+      assignedToId: "worker-1",
+      createdAt: new Date(),
+      assignedTo: { id: "worker-1", employeeId: "W1", displayName: "Worker One" },
+      tasks: [
+        { id: "task-1", status: TaskStatus.COMPLETED, product: { id: "product-1", name: "Cable" }, location: { id: "loc-1", code: "L001", name: "Storage 1" }, assignedTo: { id: "worker-1", employeeId: "W1", displayName: "Worker One" } },
+      ],
+    };
+    (service as unknown as { prisma: { cycleCountPlan: { findUnique: jest.Mock } } }).prisma.cycleCountPlan.findUnique.mockResolvedValue(plan);
+    (service as unknown as { prisma: { discrepancy: { findMany: jest.Mock } } }).prisma.discrepancy.findMany.mockResolvedValue([
+      { id: "case-1", caseNumber: "DSC-1", status: "OPEN", expectedQuantity: 10, countedQuantity: 8, transaction: { taskId: "task-1" } },
+      { id: "case-2", caseNumber: "DSC-2", status: "CLOSED", expectedQuantity: 10, countedQuantity: 9, transaction: { taskId: "task-1" } },
+    ]);
+
+    const result = await service.getCycleCountPlan("plan-1");
+
+    expect(result.planNumber).toBe("CC-0001");
+    expect(result.totalTasks).toBe(1);
+    expect(result.completedTasks).toBe(1);
+    expect(result.status).toBe("COMPLETED");
+    expect(result.tasks).toHaveLength(1);
+    expect(result.tasks[0].discrepancies).toHaveLength(2);
+    expect(result.discrepancyCount).toBe(2);
   });
 });

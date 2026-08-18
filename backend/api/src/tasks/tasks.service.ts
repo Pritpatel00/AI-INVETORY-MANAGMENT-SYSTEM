@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { NotificationType, TaskStatus, TaskType, TaskPriority, UserRole } from "@prisma/client";
+import { NotificationType, Prisma, TaskStatus, TaskType, TaskPriority, UserRole } from "@prisma/client";
+import { createHash } from "node:crypto";
 import type { AuthenticatedUser } from "../auth/auth-user";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -179,8 +180,57 @@ export class TasksService {
     if (input.dueAt && input.dueAt.slice(0, 7) !== input.periodMonth) {
       throw new BadRequestException("The cycle-count due date must be inside the selected count period.");
     }
+    if (input.dueAt) {
+      const due = new Date(input.dueAt);
+      if (Number.isNaN(due.getTime())) {
+        throw new BadRequestException("The cycle-count due date is invalid.");
+      }
+      if (due.getTime() < Date.now()) {
+        throw new BadRequestException("The cycle-count due date must be in the future.");
+      }
+    }
     const locationIds = [...new Set(input.locationIds)];
-    const [worker, locations, balances, existing] = await Promise.all([
+    const blindCount = input.blindCount ?? true;
+    const instructions = input.instructions?.trim() || null;
+    const requestKey = createCycleCountRequestKey({
+      periodMonth: input.periodMonth,
+      locationIds,
+      assignedToId: input.assignedToId,
+      priority: input.priority,
+      dueAt: input.dueAt ?? null,
+      blindCount,
+      instructions,
+    });
+    const planInclude = {
+      assignedTo: { select: { id: true, employeeId: true, displayName: true } },
+      tasks: {
+        include: {
+          product: true,
+          location: true,
+          assignedTo: { select: { id: true, employeeId: true, displayName: true } },
+        },
+        orderBy: [{ location: { name: "asc" } }, { product: { name: "asc" } }],
+      },
+    } satisfies Prisma.CycleCountPlanInclude;
+
+    // Idempotency: repeating the exact same request returns the existing plan
+    // and its tasks instead of creating duplicates. The unique requestKey on
+    // the plan makes this safe even under concurrent identical submissions.
+    const existing = await this.prisma.cycleCountPlan.findUnique({
+      where: { requestKey },
+      include: planInclude,
+    });
+    if (existing) {
+      return {
+        ...existing,
+        createdTasks: existing.tasks.length,
+        skippedDuplicates: 0,
+        selectedLocations: locationIds.length,
+        idempotent: true,
+      };
+    }
+
+    const [worker, locations, balances, existingTasks] = await Promise.all([
       this.prisma.user.findFirst({
         where: { id: input.assignedToId, active: true, role: UserRole.WORKER },
       }),
@@ -198,10 +248,14 @@ export class TasksService {
         include: { product: true, location: true },
         orderBy: [{ location: { name: "asc" } }, { product: { name: "asc" } }],
       }),
+      // Duplicate prevention is scoped to the count period: an existing
+      // cycle-count task for the same period, product and location blocks a
+      // new one. The database partial unique index enforces the same rule
+      // even when two requests race.
       this.prisma.inventoryTask.findMany({
         where: {
           type: TaskType.CYCLE_COUNT,
-          status: { in: [TaskStatus.OPEN, TaskStatus.IN_PROGRESS] },
+          periodMonth: input.periodMonth,
           locationId: { in: locationIds },
         },
         select: { productId: true, locationId: true },
@@ -211,62 +265,288 @@ export class TasksService {
     if (locations.length !== locationIds.length) {
       throw new BadRequestException("One or more selected warehouse locations are inactive or unavailable.");
     }
-    if (balances.length === 0) {
-      throw new BadRequestException("No active products with stock were found at the selected locations.");
+    const periodLabel = formatPeriodMonth(input.periodMonth);
+    // Reject any selected location that has no stocked items: a month-end
+    // count only ever targets items with on-hand quantity greater than zero.
+    const stockedLocationIds = new Set(balances.map((balance) => balance.locationId));
+    const emptyLocation = locations.find((location) => !stockedLocationIds.has(location.id));
+    if (emptyLocation) {
+      throw new BadRequestException(
+        `${emptyLocation.name} has no items with stock to count for ${periodLabel}.`,
+      );
     }
-    const duplicateKeys = new Set(existing.map((task) => `${task.productId}:${task.locationId}`));
-    const taskBalances = balances.filter((balance) => !duplicateKeys.has(`${balance.productId}:${balance.locationId}`));
+    const duplicateKeys = new Set(
+      existingTasks.map((task) => `${task.productId}:${task.locationId}`),
+    );
+    const taskBalances = balances.filter(
+      (balance) => !duplicateKeys.has(`${balance.productId}:${balance.locationId}`),
+    );
     if (taskBalances.length === 0) {
-      throw new ConflictException("Every selected item and location already has an open cycle-count task.");
+      throw new ConflictException(
+        "Every selected item and location already has a cycle-count task for this period.",
+      );
     }
     const dueAt = input.dueAt ? new Date(input.dueAt) : null;
     const planNumber = `CC-${new Date().toISOString().replace(/\D/g, "").slice(0, 14)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-    const periodLabel = new Date(`${input.periodMonth}-01T00:00:00.000Z`).toLocaleString("en-US", {
-      month: "long",
-      year: "numeric",
-      timeZone: "UTC",
-    });
     const title = locations.length === 1
       ? `${periodLabel} cycle count — ${locations[0].name}`
       : `${periodLabel} cycle count — ${locations.length} locations`;
-    return this.prisma.$transaction(async (database) => {
-      const plan = await database.cycleCountPlan.create({
-        data: {
-          planNumber,
-          title,
-          periodMonth: input.periodMonth,
-          priority: input.priority,
-          dueAt,
-          blindCount: input.blindCount ?? true,
-          assignedToId: worker.id,
+    try {
+      return await this.prisma.$transaction(async (database) => {
+        const plan = await database.cycleCountPlan.create({
+          data: {
+            planNumber,
+            title,
+            periodMonth: input.periodMonth,
+            priority: input.priority,
+            dueAt,
+            blindCount,
+            instructions,
+            requestKey,
+            assignedToId: worker.id,
+          },
+        });
+        const created = await database.inventoryTask.createMany({
+          data: taskBalances.map((balance) => ({
+            type: TaskType.CYCLE_COUNT,
+            priority: input.priority,
+            title: `Count ${balance.product.name}`,
+            description: buildCycleCountDescription(
+              balance,
+              blindCount,
+              instructions,
+            ),
+            dueAt,
+            assignedToId: worker.id,
+            productId: balance.productId,
+            locationId: balance.locationId,
+            cycleCountPlanId: plan.id,
+            periodMonth: input.periodMonth,
+          })),
+          // A concurrent request may have already inserted the same
+          // period/product/location rows; skip those instead of failing.
+          skipDuplicates: true,
+        });
+        if (created.count === 0) {
+          throw new ConflictException(
+            "Every selected item and location already has a cycle-count task for this period.",
+          );
+        }
+        const tasks = await database.inventoryTask.findMany({
+          where: { cycleCountPlanId: plan.id },
+          include: {
+            product: true,
+            location: true,
+            assignedTo: { select: { id: true, employeeId: true, displayName: true } },
+          },
+          orderBy: [{ location: { name: "asc" } }, { product: { name: "asc" } }],
+        });
+        // Notify the assigned Warehouse Executive so the new count work is
+        // visible immediately.
+        await this.notifications.createForUser(database, {
+          userId: worker.id,
+          type: NotificationType.CYCLE_COUNT_PLAN_ASSIGNED,
+          title: "Month-End Cycle Count plan assigned",
+          message: `${planNumber}: ${tasks.length} count task${tasks.length === 1 ? "" : "s"} assigned for ${periodLabel}.`,
+          linkType: "task",
+          linkId: plan.id,
+        });
+        return {
+          ...plan,
+          assignedTo: worker,
+          tasks,
+          createdTasks: tasks.length,
+          skippedDuplicates: balances.length - taskBalances.length,
+          selectedLocations: locations.length,
+          idempotent: false,
+        };
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        // Two identical requests raced and one plan won the unique requestKey.
+        // Return the winner's plan and tasks instead of failing.
+        const winner = await this.prisma.cycleCountPlan.findUnique({
+          where: { requestKey },
+          include: planInclude,
+        });
+        if (winner) {
+          return {
+            ...winner,
+            createdTasks: winner.tasks.length,
+            skippedDuplicates: 0,
+            selectedLocations: locationIds.length,
+            idempotent: true,
+          };
+        }
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Month-End Cycle Count plans for the manager monitoring section, each with
+   * derived task statistics and the number of discrepancies produced by the
+   * plan's tasks (linked through the count transaction).
+   */
+  async listCycleCountPlans() {
+    const plans = await this.prisma.cycleCountPlan.findMany({
+      include: {
+        assignedTo: { select: { id: true, employeeId: true, displayName: true } },
+        tasks: {
+          select: {
+            id: true,
+            status: true,
+            location: { select: { id: true, code: true, name: true } },
+          },
         },
-      });
-      await database.inventoryTask.createMany({
-        data: taskBalances.map((balance) => ({
-          type: TaskType.CYCLE_COUNT,
-          priority: input.priority,
-          title: `Count ${balance.product.name}`,
-          description: `${input.blindCount ?? true ? "Blind count" : "Cycle count"} for ${balance.product.name} at ${balance.location.name} (${balance.location.code}). Count only this item at this location.`,
-          dueAt,
-          assignedToId: worker.id,
-          productId: balance.productId,
-          locationId: balance.locationId,
-          cycleCountPlanId: plan.id,
-        })),
-      });
-      const tasks = await database.inventoryTask.findMany({
-        where: { cycleCountPlanId: plan.id },
-        include: { product: true, location: true, assignedTo: true },
-        orderBy: [{ location: { name: "asc" } }, { product: { name: "asc" } }],
-      });
-      return {
-        ...plan,
-        tasks,
-        createdTasks: tasks.length,
-        skippedDuplicates: balances.length - taskBalances.length,
-        selectedLocations: locations.length,
-      };
+      },
+      orderBy: [{ createdAt: "desc" }],
     });
+    const taskIds = plans.flatMap((plan) => plan.tasks.map((task) => task.id));
+    const discrepancyCounts = await this.countDiscrepanciesByTask(taskIds);
+    return plans.map((plan) => this.summarizePlan(plan, discrepancyCounts));
+  }
+
+  /**
+   * One Month-End Cycle Count plan with every generated task, its product,
+   * location, status and any linked discrepancy cases.
+   */
+  async getCycleCountPlan(id: string) {
+    const plan = await this.prisma.cycleCountPlan.findUnique({
+      where: { id },
+      include: {
+        assignedTo: { select: { id: true, employeeId: true, displayName: true } },
+        tasks: {
+          include: {
+            product: true,
+            location: true,
+            assignedTo: { select: { id: true, employeeId: true, displayName: true } },
+          },
+          orderBy: [{ location: { name: "asc" } }, { product: { name: "asc" } }],
+        },
+      },
+    });
+    if (!plan) throw new NotFoundException("Cycle count plan not found.");
+    const taskIds = plan.tasks.map((task) => task.id);
+    const discrepancyCounts = await this.countDiscrepanciesByTask(taskIds);
+    const discrepancies = taskIds.length
+      ? await this.prisma.discrepancy.findMany({
+          where: { transaction: { taskId: { in: taskIds } } },
+          select: {
+            id: true,
+            caseNumber: true,
+            status: true,
+            expectedQuantity: true,
+            countedQuantity: true,
+            transaction: { select: { taskId: true } },
+          },
+          orderBy: { createdAt: "asc" },
+        })
+      : [];
+    const discrepanciesByTask = new Map<string, typeof discrepancies>();
+    for (const entry of discrepancies) {
+      const taskId = entry.transaction?.taskId;
+      if (!taskId) continue;
+      const list = discrepanciesByTask.get(taskId) ?? [];
+      list.push(entry);
+      discrepanciesByTask.set(taskId, list);
+    }
+    const tasks = plan.tasks.map((task) => ({
+      ...task,
+      discrepancies: discrepanciesByTask.get(task.id) ?? [],
+    }));
+    return {
+      ...this.summarizePlan(plan, discrepancyCounts),
+      instructions: plan.instructions,
+      tasks,
+      discrepancyCount: discrepancies.length,
+    };
+  }
+
+  /**
+   * Count discrepancies whose originating count transaction is linked to the
+   * given task ids (taskId -> count).
+   */
+  private async countDiscrepanciesByTask(taskIds: string[]) {
+    const counts = new Map<string, number>();
+    if (taskIds.length === 0) return counts;
+    const rows = await this.prisma.discrepancy.findMany({
+      where: { transaction: { taskId: { in: taskIds } } },
+      select: { transaction: { select: { taskId: true } } },
+    });
+    for (const row of rows) {
+      const taskId = row.transaction?.taskId;
+      if (!taskId) continue;
+      counts.set(taskId, (counts.get(taskId) ?? 0) + 1);
+    }
+    return counts;
+  }
+
+  /**
+   * Derive the manager-facing summary for a plan: distinct locations, task
+   * totals by status, plan status and discrepancy count.
+   */
+  private summarizePlan(
+    plan: {
+      id: string;
+      planNumber: string;
+      title: string;
+      periodMonth: string;
+      priority: TaskPriority;
+      dueAt: Date | null;
+      blindCount: boolean;
+      assignedToId: string;
+      createdAt: Date;
+      assignedTo?: { id: string; employeeId: string; displayName: string };
+      tasks: Array<{ id: string; status: TaskStatus; location?: { id: string; code: string; name: string } | null }>;
+    },
+    discrepancyCounts: Map<string, number>,
+  ) {
+    const locationMap = new Map<string, { id: string; code: string; name: string }>();
+    for (const task of plan.tasks) {
+      if (task.location) locationMap.set(task.location.id, task.location);
+    }
+    const totalTasks = plan.tasks.length;
+    const openTasks = plan.tasks.filter((task) => task.status === TaskStatus.OPEN).length;
+    const inProgressTasks = plan.tasks.filter((task) => task.status === TaskStatus.IN_PROGRESS).length;
+    const completedTasks = plan.tasks.filter((task) => task.status === TaskStatus.COMPLETED).length;
+    const cancelledTasks = plan.tasks.filter((task) => task.status === TaskStatus.CANCELLED).length;
+    const status =
+      totalTasks === 0
+        ? "EMPTY"
+        : completedTasks === totalTasks
+          ? "COMPLETED"
+          : inProgressTasks > 0
+            ? "IN_PROGRESS"
+            : openTasks > 0
+              ? "OPEN"
+              : "CANCELLED";
+    return {
+      id: plan.id,
+      planNumber: plan.planNumber,
+      title: plan.title,
+      periodMonth: plan.periodMonth,
+      priority: plan.priority,
+      dueAt: plan.dueAt,
+      blindCount: plan.blindCount,
+      assignedToId: plan.assignedToId,
+      createdAt: plan.createdAt,
+      assignedTo: plan.assignedTo,
+      locations: [...locationMap.values()],
+      totalTasks,
+      openTasks,
+      inProgressTasks,
+      completedTasks,
+      cancelledTasks,
+      discrepancyCount: plan.tasks.reduce(
+        (sum, task) => sum + (discrepancyCounts.get(task.id) ?? 0),
+        0,
+      ),
+      status,
+    };
   }
   async removeOpen(id: string) {
     const task = await this.prisma.inventoryTask.findUnique({ where: { id } });
@@ -416,4 +696,48 @@ export class TasksService {
         : UserRole.WORKER;
     return this.prisma.user.create({ data: { employeeId: actor.username.toUpperCase(), email: email ?? `${actor.username}@keycloak.local`, displayName: actor.username, role } });
   }
+}
+
+/**
+ * Deterministic fingerprint of a normalized plan request. The exact same
+ * request (same period, locations, assignee, priority, due date, blind flag
+ * and instructions) always produces the same key, which is what makes plan
+ * creation idempotent.
+ */
+function createCycleCountRequestKey(input: {
+  periodMonth: string;
+  locationIds: string[];
+  assignedToId: string;
+  priority: TaskPriority;
+  dueAt: string | null;
+  blindCount: boolean;
+  instructions: string | null;
+}) {
+  const canonical = JSON.stringify({
+    periodMonth: input.periodMonth,
+    locationIds: [...input.locationIds].sort(),
+    assignedToId: input.assignedToId,
+    priority: input.priority,
+    dueAt: input.dueAt,
+    blindCount: input.blindCount,
+    instructions: input.instructions,
+  });
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
+function formatPeriodMonth(periodMonth: string) {
+  return new Date(`${periodMonth}-01T00:00:00.000Z`).toLocaleString("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function buildCycleCountDescription(
+  balance: { product: { name: string }; location: { name: string; code: string } },
+  blindCount: boolean,
+  instructions: string | null,
+) {
+  const base = `${blindCount ? "Blind count" : "Cycle count"} for ${balance.product.name} at ${balance.location.name} (${balance.location.code}). Count only this item at this location.`;
+  return instructions ? `${base}\nInstructions: ${instructions}` : base;
 }

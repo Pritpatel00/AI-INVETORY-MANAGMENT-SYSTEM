@@ -17,6 +17,9 @@ export class TasksController {
   constructor(private readonly tasks: TasksService) {}
   @Get() list(@Req() request: AuthenticatedRequest) { return this.tasks.list(request.authUser!); }
   @Get("assignees") @Roles("manager", "administrator") assignees() { return this.tasks.listAssignees(); }
+  @Get("cycle-count-plans") @Roles("manager", "administrator") cycleCountPlans() { return this.tasks.listCycleCountPlans(); }
+  @Get("cycle-count-plans/:id") @Roles("manager", "administrator")
+  cycleCountPlan(@Param("id", new ParseUUIDPipe()) id: string) { return this.tasks.getCycleCountPlan(id); }
   @Post() @Roles("manager", "administrator") create(@Body() input: CreateTaskDto) { return this.tasks.create(input); }
   @Post("cycle-count-plans") @Roles("manager", "administrator") createCycleCountPlan(@Body() input: CreateCycleCountPlanDto) { return this.tasks.createCycleCountPlan(input); }
   @Delete(":id") @Roles("manager", "administrator") remove(@Param("id", new ParseUUIDPipe()) id: string) { return this.tasks.removeOpen(id); }

@@ -93,6 +93,7 @@ enum NotificationType {
   SHIPMENT_PREPARED
   SHIPMENT_COMPLETED
   SHIPMENT_CANCELLED
+  CYCLE_COUNT_PLAN_ASSIGNED
 }
 
 enum DiscrepancyAuditAction {
@@ -368,6 +369,12 @@ model InventoryTransaction {
   task                      InventoryTask?
   recountTaskId             String?
   recountTask               InventoryTask?          @relation("RecountTaskTransactions", fields: [recountTaskId], references: [id])
+  // The assigned Month-End Cycle Count task a count transaction was created
+  // from. The worker speaks only the counted quantity; the product and
+  // location come from the task, and this link lets the plan report which
+  // tasks produced discrepancies and keeps the task lifecycle atomic.
+  taskId                    String?                 @map("task_id")
+  countTask                 InventoryTask?          @relation("CountTaskTransactions", fields: [taskId], references: [id])
   discrepancy               Discrepancy?
   resolutionDiscrepancy     Discrepancy?            @relation("ResolutionDiscrepancies")
   evidence                  DiscrepancyEvidence[]   @relation("TransactionEvidence")
@@ -377,6 +384,7 @@ model InventoryTransaction {
   @@index([status, createdAt])
   @@index([significantDiscrepancy, createdAt])
   @@index([recountTaskId])
+  @@index([taskId])
   @@map("inventory_transactions")
 }
 
@@ -427,6 +435,10 @@ model InventoryTask {
   sourceLocationId          String?
   destinationLocationId     String?
   cycleCountPlanId          String?
+  // Count period (YYYY-MM) stored on each task so the plan period travels
+  // with the task and a database constraint can block duplicate counts of the
+  // same item at the same location within one period.
+  periodMonth               String?                @map("period_month")
   sourceTransactionId       String?                @unique
   createdAt                 DateTime               @default(now())
   startedAt                 DateTime?
@@ -439,6 +451,7 @@ model InventoryTask {
   cycleCountPlan            CycleCountPlan?        @relation(fields: [cycleCountPlanId], references: [id], onDelete: SetNull)
   sourceTransaction         InventoryTransaction?  @relation(fields: [sourceTransactionId], references: [id])
   recountResultTransactions InventoryTransaction[] @relation("RecountTaskTransactions")
+  countResultTransactions   InventoryTransaction[] @relation("CountTaskTransactions")
   discrepancies             Discrepancy[]          @relation("RecountTaskDiscrepancies")
   reservationId             String?                @map("reservation_id")
   reservation               StockReservation?      @relation("ShipmentTasks", fields: [reservationId], references: [id], onDelete: SetNull)
@@ -463,6 +476,12 @@ model CycleCountPlan {
   priority     TaskPriority    @default(MEDIUM)
   dueAt        DateTime?
   blindCount   Boolean         @default(true)
+  // Optional manager instructions copied onto every generated task.
+  instructions String?
+  // Deterministic fingerprint of the normalized create request. Repeating the
+  // exact same plan request returns the existing plan instead of duplicating
+  // it (idempotent month-end scheduling).
+  requestKey   String?         @unique @map("request_key")
   assignedToId String
   createdAt    DateTime        @default(now())
   assignedTo   User            @relation(fields: [assignedToId], references: [id])

@@ -2,6 +2,7 @@
 
 import { Mic, Clock, AlertTriangle, ChevronDown, ClipboardCheck } from "lucide-react";
 import { EmptyState } from "../shared/EmptyState";
+import { formatCountPeriod, priorityTone } from "../shared/helpers";
 
 interface TaskItem {
   id: string;
@@ -10,6 +11,7 @@ interface TaskItem {
   detail: string;
   note: string;
   urgent: boolean;
+  priority?: string;
   status: string;
   dueAt: string | null;
   automatic: boolean;
@@ -22,6 +24,10 @@ interface TaskItem {
   planCompleted?: number;
   planTotal?: number;
   blindCount?: boolean;
+  /** YYYY-MM count period for Month-End Cycle Count tasks. */
+  countPeriod?: string;
+  /** True when this task is part of a Month-End Cycle Count plan. */
+  monthEndCount?: boolean;
   shipmentReference?: string;
   reservationReference?: string;
 }
@@ -110,6 +116,11 @@ export function ExecutiveTaskQueue({
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="truncate text-sm font-extrabold text-[#17345f]">{task.title}</p>
+                    {task.monthEndCount && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-[#f2efff] px-2.5 py-0.5 text-[10px] font-extrabold text-[#6349c1]">
+                        Month-End Cycle Count
+                      </span>
+                    )}
                     {task.type === "RECOUNT" && task.caseNumber && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-[#f2efff] px-2.5 py-0.5 text-[10px] font-extrabold text-[#6349c1]">
                         Recount required · {task.caseNumber}
@@ -137,7 +148,12 @@ export function ExecutiveTaskQueue({
                     )}
                   </div>
                   <p className="mt-1 text-xs font-semibold text-[#7186a3]">{task.detail}</p>
-                  {task.planTitle && <p className="mt-1 text-[10px] font-bold text-[#0e7490]">{task.planTitle}{task.blindCount ? " · Blind count: system quantity is hidden" : ""}</p>}
+                  {task.planTitle && <p className="mt-1 text-[10px] font-bold text-[#0e7490]">{task.planTitle}{task.countPeriod ? ` · Count period ${formatCountPeriod(task.countPeriod)}` : ""}{task.blindCount ? " · Blind count: system quantity is hidden" : ""}</p>}
+                  {task.monthEndCount && task.priority && (
+                    <span className={`mt-1.5 inline-flex w-fit items-center rounded-full px-2.5 py-0.5 text-[9px] font-extrabold ${priorityTone(task.priority)}`}>
+                      {task.priority} priority
+                    </span>
+                  )}
                   {task.caseExpected !== undefined && task.caseCounted !== undefined && (
                     <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-[#e5d9ff] bg-[#faf7ff] px-3 py-2 text-[11px] font-bold text-[#5a4696]">
                       <span>Previous count {task.caseCounted}</span>

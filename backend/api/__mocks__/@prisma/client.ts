@@ -57,6 +57,7 @@ export const NotificationType = {
   SHIPMENT_PREPARED: "SHIPMENT_PREPARED",
   SHIPMENT_COMPLETED: "SHIPMENT_COMPLETED",
   SHIPMENT_CANCELLED: "SHIPMENT_CANCELLED",
+  CYCLE_COUNT_PLAN_ASSIGNED: "CYCLE_COUNT_PLAN_ASSIGNED",
 } as const;
 
 export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType];

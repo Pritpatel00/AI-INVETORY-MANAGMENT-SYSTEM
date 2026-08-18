@@ -129,7 +129,55 @@ export interface ApiSupplier {
   phone?: string | null; address?: string | null; leadTimeDays: number;
   minimumOrderQuantity: number; active: boolean;
 }
-export interface ApiCycleCountPlan { id:string; planNumber:string; title:string; periodMonth:string; priority:"LOW"|"MEDIUM"|"HIGH"|"URGENT"; dueAt?:string|null; blindCount:boolean; assignedToId:string; createdAt:string; tasks?:Array<{id:string;status:"OPEN"|"IN_PROGRESS"|"COMPLETED"|"CANCELLED"}>; }
+export interface ApiCycleCountPlan {
+  id: string;
+  planNumber: string;
+  title: string;
+  periodMonth: string;
+  priority: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+  dueAt?: string | null;
+  blindCount: boolean;
+  instructions?: string | null;
+  assignedToId: string;
+  createdAt: string;
+  assignedTo?: { id: string; employeeId: string; displayName: string };
+  locations?: Array<{ id: string; code: string; name: string }>;
+  totalTasks?: number;
+  openTasks?: number;
+  inProgressTasks?: number;
+  completedTasks?: number;
+  cancelledTasks?: number;
+  discrepancyCount?: number;
+  status?: "OPEN" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "EMPTY";
+  tasks?: Array<{ id: string; status: "OPEN" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED" }>;
+}
+
+export interface ApiCycleCountPlanTask {
+  id: string;
+  type: string;
+  priority: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+  status: "OPEN" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+  title: string;
+  description?: string | null;
+  dueAt?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  product?: ApiProduct | null;
+  location?: ApiLocation | null;
+  assignedTo?: { id: string; employeeId: string; displayName: string } | null;
+  discrepancies: Array<{
+    id: string;
+    caseNumber: string;
+    status: string;
+    expectedQuantity: number;
+    countedQuantity: number;
+  }>;
+}
+
+export interface ApiCycleCountPlanDetail extends ApiCycleCountPlan {
+  instructions?: string | null;
+  tasks: ApiCycleCountPlanTask[];
+}
 export interface ApiInventoryTask { id:string; type:string; priority:"LOW"|"MEDIUM"|"HIGH"|"URGENT"; status:"OPEN"|"IN_PROGRESS"|"COMPLETED"|"CANCELLED"; title:string; description?:string|null; dueAt?:string|null; createdAt:string; startedAt?:string|null; completedAt?:string|null; quantity?:number|null; product?:ApiProduct|null; location?:ApiLocation|null; sourceLocation?:ApiLocation|null; destinationLocation?:ApiLocation|null; assignedTo?:{id:string;employeeId:string;displayName:string}|null; cycleCountPlan?:ApiCycleCountPlan|null; sourceTransactionId?:string|null; reservationId?:string|null; shipmentReference?:string|null; preparedBy?:{id:string;employeeId:string;displayName:string}|null; reservation?:{ id:string; reservationNumber:string; request?:{ referenceNumber:string; requestedFor:string } }|null; discrepancies?: Array<{ id:string; caseNumber:string; expectedQuantity:number; countedQuantity:number; differenceQuantity:number; status:string; managerNotes?:string|null }> | null; }
 export interface ApiTaskAssignee { id:string; employeeId:string; displayName:string; shift?:string|null; warehouseZone?:string|null; openTaskCount?: number; }
 
@@ -730,7 +778,9 @@ export function markAllNotificationsRead() {
 export function fetchInventoryTasks(){return request<ApiInventoryTask[]>("/tasks");}
 export function fetchTaskAssignees(){return request<ApiTaskAssignee[]>("/tasks/assignees");}
 export function createInventoryTask(input:{type:string;priority:string;title:string;description?:string;dueAt?:string;assignedToId:string;productId?:string;locationId?:string;quantity?:number;sourceLocationId?:string;destinationLocationId?:string}){return request<ApiInventoryTask>("/tasks",{method:"POST",body:JSON.stringify(input)});}
-export function createCycleCountPlan(input:{periodMonth:string;locationIds:string[];assignedToId:string;priority:string;dueAt?:string;blindCount:boolean}){return request<ApiCycleCountPlan & {tasks:ApiInventoryTask[];createdTasks:number;skippedDuplicates:number;selectedLocations:number}>("/tasks/cycle-count-plans",{method:"POST",body:JSON.stringify(input)});}
+export function createCycleCountPlan(input:{periodMonth:string;locationIds:string[];assignedToId:string;priority:string;dueAt?:string;blindCount:boolean;instructions?:string}){return request<ApiCycleCountPlan & {tasks:ApiInventoryTask[];createdTasks:number;skippedDuplicates:number;selectedLocations:number;idempotent?:boolean}>("/tasks/cycle-count-plans",{method:"POST",body:JSON.stringify(input)});}
+export function fetchCycleCountPlans(){return request<ApiCycleCountPlan[]>("/tasks/cycle-count-plans");}
+export function fetchCycleCountPlan(id:string){return request<ApiCycleCountPlanDetail>(`/tasks/cycle-count-plans/${id}`);}
 export function deleteInventoryTask(id:string){return request<ApiInventoryTask>(`/tasks/${id}`,{method:"DELETE"});}
 export function startInventoryTask(id:string){return request<ApiInventoryTask>(`/tasks/${id}/start`,{method:"POST"});}
 export function completeInventoryTask(id:string){return request<ApiInventoryTask>(`/tasks/${id}/complete`,{method:"POST"});}
@@ -773,6 +823,7 @@ export function createPendingInventoryTransaction(
   clientRequestId: string,
   recountTaskId?: string | null,
   shipmentTaskId?: string | null,
+  cycleCountTaskId?: string | null,
 ) {
   const { fields } = extraction;
   if (!fields.action || !fields.product || fields.quantity === null) {
@@ -795,7 +846,7 @@ export function createPendingInventoryTransaction(
       evidenceId: extraction.evidenceId ?? undefined,
       clientRequestId,
       recountTaskId: recountTaskId ?? undefined,
-      taskId: shipmentTaskId ?? undefined,
+      taskId: shipmentTaskId ?? cycleCountTaskId ?? undefined,
     }),
   });
 }

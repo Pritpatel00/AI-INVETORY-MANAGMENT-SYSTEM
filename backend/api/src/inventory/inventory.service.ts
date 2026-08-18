@@ -629,24 +629,46 @@ export class InventoryService {
       // the assigned SHIP task. The confirmation router then applies the
       // reservation-aware movement (on-hand and reserved both decrease and
       // the reservation moves towards fulfilled) instead of a plain Ship.
+      // A Month-End Cycle Count task links its count transaction through the
+      // transaction's taskId so the plan can report which tasks produced
+      // discrepancies and the task completes atomically with confirmation.
       if (input.taskId) {
         const task = await database.inventoryTask.findUnique({ where: { id: input.taskId } });
-        if (!task || task.type !== TaskType.SHIP || !task.reservationId) {
-          throw new BadRequestException("This task is not a reservation shipment task.");
-        }
+        if (!task) throw new NotFoundException("Task not found.");
         if (task.status === TaskStatus.COMPLETED || task.status === TaskStatus.CANCELLED) {
-          throw new ConflictException("This shipment task can no longer be worked on.");
+          throw new ConflictException("This task can no longer be worked on.");
         }
-        if (!task.assignedToId || task.assignedToId !== user.id) {
-          throw new ForbiddenException("This shipment task is assigned to another warehouse executive.");
+        if (task.type === TaskType.SHIP) {
+          if (!task.reservationId) {
+            throw new BadRequestException("This task is not a reservation shipment task.");
+          }
+          if (!task.assignedToId || task.assignedToId !== user.id) {
+            throw new ForbiddenException("This shipment task is assigned to another warehouse executive.");
+          }
+          if (task.productId !== input.productId || task.sourceLocationId !== input.sourceLocationId) {
+            throw new BadRequestException("The transaction details do not match the assigned shipment task.");
+          }
+          await database.inventoryTask.update({
+            where: { id: task.id },
+            data: { sourceTransactionId: transaction.id },
+          });
+        } else if (task.type === TaskType.CYCLE_COUNT) {
+          if (input.action !== InventoryAction.CYCLE_COUNT) {
+            throw new BadRequestException("This task can only be linked to a cycle-count transaction.");
+          }
+          if (!task.assignedToId || task.assignedToId !== user.id) {
+            throw new ForbiddenException("This task is assigned to another warehouse executive.");
+          }
+          if (task.productId !== input.productId || task.locationId !== input.sourceLocationId) {
+            throw new BadRequestException("The transaction details do not match the assigned cycle-count task.");
+          }
+          await database.inventoryTransaction.update({
+            where: { id: transaction.id },
+            data: { taskId: task.id },
+          });
+        } else {
+          throw new BadRequestException("This task cannot be linked to an inventory transaction.");
         }
-        if (task.productId !== input.productId || task.sourceLocationId !== input.sourceLocationId) {
-          throw new BadRequestException("The transaction details do not match the assigned shipment task.");
-        }
-        await database.inventoryTask.update({
-          where: { id: task.id },
-          data: { sourceTransactionId: transaction.id },
-        });
       }
       if (input.evidenceId) {
         await database.voiceEvidence.update({
@@ -798,6 +820,10 @@ export class InventoryService {
       confirmedAt: Date | null;
       reviewReasons: string | null;
       recountTaskId?: string | null;
+      // The Month-End Cycle Count task this count was created from. When set,
+      // the task is completed atomically with the confirmation so it leaves
+      // the worker's open-task queue.
+      taskId?: string | null;
       product?: { controlled?: boolean } | null;
     },
     id: string,
@@ -839,7 +865,7 @@ export class InventoryService {
 
     // Matching count completes normally — posted directly, no discrepancy.
     if (evaluation.severity === "NONE") {
-      return this.postMatchingCycleCount(id);
+      return this.postMatchingCycleCount(id, transaction.taskId ?? null);
     }
 
     // Differing count: create the discrepancy and route to review atomically.
@@ -863,6 +889,15 @@ export class InventoryService {
                 transaction.notes ?? transaction.transcript ?? null,
               controlled,
               transcript: transaction.transcript,
+            });
+          }
+          // The assigned Month-End Cycle Count task is finished once the count
+          // is submitted, so it leaves the worker's open-task queue whether
+          // the count matches or is routed to manager review.
+          if (transaction.taskId) {
+            await database.inventoryTask.update({
+              where: { id: transaction.taskId },
+              data: { status: TaskStatus.COMPLETED, completedAt: new Date() },
             });
           }
           return database.inventoryTransaction.update({
@@ -1075,7 +1110,7 @@ export class InventoryService {
   }
 
   /** Post a matching cycle count atomically (counted === expected). */
-  private async postMatchingCycleCount(id: string) {
+  private async postMatchingCycleCount(id: string, taskId: string | null = null) {
     try {
       const posted = await this.prisma.$transaction(
         async (database) => {
@@ -1096,6 +1131,15 @@ export class InventoryService {
             current.productId,
             this.getAffectedLocationIds(current),
           );
+          // Complete the assigned Month-End Cycle Count task in the same
+          // transaction so a matching count posts AND completes the task
+          // atomically — the task disappears from the open queue immediately.
+          if (taskId) {
+            await database.inventoryTask.update({
+              where: { id: taskId },
+              data: { status: TaskStatus.COMPLETED, completedAt: new Date() },
+            });
+          }
           return database.inventoryTransaction.update({
             where: { id },
             data: {

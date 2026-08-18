@@ -799,11 +799,19 @@ export function ExecutiveDashboard({
           activeVoiceTask?.type === "SHIP" && activeVoiceTask.source === "ASSIGNED"
             ? activeVoiceTask.id
             : undefined;
+        // A Month-End Cycle Count task links its count transaction to the task
+        // (the item and location already come from the task). The backend then
+        // completes the task atomically when the count is confirmed.
+        const cycleCountTaskId =
+          activeVoiceTask?.type === "CYCLE_COUNT" && activeVoiceTask.source === "ASSIGNED"
+            ? activeVoiceTask.id
+            : undefined;
         transaction = await createPendingInventoryTransaction(
           extraction,
           clientRequestIdRef.current,
           recountTaskId,
           shipmentTaskId,
+          cycleCountTaskId,
         );
         setSubmittedTransaction(transaction);
       }
@@ -816,12 +824,13 @@ export function ExecutiveDashboard({
       let taskCompletionMessage = "";
       if (activeVoiceTask) {
         if (activeVoiceTask.source === "ASSIGNED") {
-          if (activeVoiceTask.type === "RECOUNT" || activeVoiceTask.type === "SHIP") {
+          if (["RECOUNT", "SHIP", "CYCLE_COUNT"].includes(activeVoiceTask.type)) {
             // The backend completes the linked task atomically while
             // confirming the result (a matching recount posts and closes the
-            // case; a shipment posts and advances the reservation), so the
-            // worker queue is refreshed here instead of completing the task a
-            // second time.
+            // case; a shipment posts and advances the reservation; a
+            // month-end cycle count posts or routes to review), so the worker
+            // queue is refreshed here instead of completing the task a second
+            // time.
             try {
               setAssignedTasks(await fetchInventoryTasks());
               taskCompletionMessage = ` Task “${activeVoiceTask.title}” is now complete.`;
@@ -1142,11 +1151,16 @@ export function ExecutiveDashboard({
       caseExpected: linkedCase?.expectedQuantity ?? undefined,
       caseCounted: linkedCase?.countedQuantity ?? undefined,
       caseDifference: linkedCase?.differenceQuantity ?? undefined,
+      priority: task.priority,
       planNumber: task.cycleCountPlan?.planNumber,
       planTitle: task.cycleCountPlan?.title,
       planCompleted: task.cycleCountPlan?.tasks?.filter((entry) => entry.status === "COMPLETED").length,
       planTotal: task.cycleCountPlan?.tasks?.length,
       blindCount: task.cycleCountPlan?.blindCount,
+      // Month-End Cycle Count tasks show the count period and a clear label
+      // in the worker queue; the instructions ride in the task description.
+      countPeriod: task.cycleCountPlan?.periodMonth,
+      monthEndCount: task.type === "CYCLE_COUNT" && Boolean(task.cycleCountPlan),
     };
   });
   const workerTasks = [...automaticTasks, ...transactionTasks.filter((candidate) => !automaticTasks.some((task) => task.title === candidate.title)).map((task) => ({ ...task, status: "WAITING", automatic: false }))];

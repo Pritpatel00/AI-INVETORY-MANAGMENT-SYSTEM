@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useMemo, type FormEvent } from "react";
+import { Fragment, useState, useEffect, useMemo, type FormEvent } from "react";
 import { AlertTriangle, ArrowRightLeft, Boxes, Camera, CheckCircle2, ChevronDown, ClipboardCheck, Download, Eye, Flag, PackageCheck, Search, Trash2, X } from "lucide-react";
-import { mapLowStock, fetchInventorySnapshot, fetchInventoryTasks, fetchTaskAssignees, refreshReorderDrafts, cancelInventoryTransaction, approveInventoryTransaction, rejectInventoryTransaction, requestInventoryRecount, createInventoryTask, createCycleCountPlan, deleteInventoryTask, type ApiInventoryTask, type ApiTaskAssignee, type ApiReorderDraft, type ApiTransaction, type InventorySnapshot } from "../api/inventory-api";
-import { taskTypeLabel, formatTaskDue, formatClock, resolveManagerPage, defaultTaskDue, priorityTone, taskStatusTone } from "../shared/helpers";
+import { mapLowStock, fetchInventorySnapshot, fetchInventoryTasks, fetchTaskAssignees, refreshReorderDrafts, cancelInventoryTransaction, approveInventoryTransaction, rejectInventoryTransaction, requestInventoryRecount, createInventoryTask, createCycleCountPlan, fetchCycleCountPlans, fetchCycleCountPlan, deleteInventoryTask, type ApiInventoryTask, type ApiTaskAssignee, type ApiReorderDraft, type ApiTransaction, type InventorySnapshot, type ApiCycleCountPlan, type ApiCycleCountPlanDetail } from "../api/inventory-api";
+import { taskTypeLabel, formatTaskDue, formatClock, formatCountPeriod, resolveManagerPage, defaultTaskDue, priorityTone, taskStatusTone } from "../shared/helpers";
 import { MetricCard } from "../shared/MetricCard";
 import { WarehouseHero } from "../shared/WarehouseHero";
 import { AdministratorDashboard } from "../administrator/AdministratorDashboard";
@@ -61,8 +61,14 @@ export function ManagerDashboard({
   const [schedulingTasks, setSchedulingTasks] = useState(false);
   const [scheduledLocationIds, setScheduledLocationIds] = useState<string[]>([]);
   const [blindCycleCount, setBlindCycleCount] = useState(true);
+  const [cycleCountInstructions, setCycleCountInstructions] = useState("");
+  const [cycleCountAssigneeId, setCycleCountAssigneeId] = useState("");
   const [cycleCountPeriod, setCycleCountPeriod] = useState(currentCycleCountPeriod);
   const [cycleCountDueValue, setCycleCountDueValue] = useState(() => monthEndDueValue(currentCycleCountPeriod));
+  const [cycleCountPlans, setCycleCountPlans] = useState<ApiCycleCountPlan[]>([]);
+  const [openPlanId, setOpenPlanId] = useState<string | null>(null);
+  const [openPlanDetail, setOpenPlanDetail] = useState<ApiCycleCountPlanDetail | null>(null);
+  const [loadingPlanDetail, setLoadingPlanDetail] = useState(false);
   const [healthMounted, setHealthMounted] = useState(false);
 
   useEffect(() => {
@@ -86,13 +92,14 @@ export function ManagerDashboard({
 
   useEffect(() => {
     let active = true;
-    Promise.all([fetchInventorySnapshot(), refreshReorderDrafts(), fetchInventoryTasks(), fetchTaskAssignees()])
-      .then(([inventory, drafts, tasks, assignees]) => {
+    Promise.all([fetchInventorySnapshot(), refreshReorderDrafts(), fetchInventoryTasks(), fetchTaskAssignees(), fetchCycleCountPlans()])
+      .then(([inventory, drafts, tasks, assignees, plans]) => {
         if (!active) return;
         setSnapshot(inventory);
         applyReorderDrafts(drafts);
         setManagerTasks(tasks);
         setTaskAssignees(assignees);
+        setCycleCountPlans(plans);
       })
       .catch(() => {
         if (!active) return;
@@ -103,15 +110,17 @@ export function ManagerDashboard({
     const refreshLiveData = async () => {
       if (!active || document.visibilityState === "hidden") return;
       try {
-        const [tasks, inventory, drafts] = await Promise.all([
+        const [tasks, inventory, drafts, plans] = await Promise.all([
           fetchInventoryTasks(),
           fetchInventorySnapshot(),
           refreshReorderDrafts(),
+          fetchCycleCountPlans(),
         ]);
         if (!active) return;
         setManagerTasks(tasks);
         setSnapshot(inventory);
         setReorderDrafts(drafts);
+        setCycleCountPlans(plans);
       } catch {
         // Keep the last visible data while the next automatic refresh retries.
       }
@@ -183,18 +192,6 @@ export function ManagerDashboard({
         : task.status === "COMPLETED",
     )
     .slice(0, 12);
-  const cycleCountLocationBalances = useMemo(() => {
-    if (!snapshot || !plannedProductId) return [];
-    return snapshot.balances
-      .filter(
-        (balance) =>
-          balance.product.id === plannedProductId &&
-          balance.quantity - balance.reservedQuantity > 0,
-      )
-      .sort((left, right) =>
-        left.location.name.localeCompare(right.location.name),
-      );
-  }, [snapshot, plannedProductId]);
   const transferSourceBalances = useMemo(() => {
     if (!snapshot || !plannedProductId) return [];
     return snapshot.balances
@@ -492,6 +489,7 @@ export function ManagerDashboard({
     const assigneeId = String(data.get("schedAssigneeId") ?? "");
     const dueAt = String(data.get("schedDueAt") ?? "");
     const priority = String(data.get("schedPriority") ?? "MEDIUM");
+    const instructions = String(data.get("schedInstructions") ?? "").trim() || undefined;
     if (scheduledLocationIds.length === 0 || cycleCountPlanPreview.tasks === 0) {
       setTaskMessageTone("error");
       setTaskMessage(
@@ -510,13 +508,23 @@ export function ManagerDashboard({
         priority,
         dueAt: dueAt || undefined,
         blindCount: blindCycleCount,
+        instructions,
       });
       setTaskMessageTone("info");
       setTaskMessage(
-        `${result.planNumber}: scheduled ${result.createdTasks} separate count task${result.createdTasks === 1 ? "" : "s"} across ${result.selectedLocations} location${result.selectedLocations === 1 ? "" : "s"}.${result.skippedDuplicates ? ` Skipped ${result.skippedDuplicates} duplicate open task${result.skippedDuplicates === 1 ? "" : "s"}.` : ""}`,
+        result.idempotent
+          ? `${result.planNumber}: this exact plan already exists — no duplicate tasks were created.`
+          : `${result.planNumber}: scheduled ${result.createdTasks} separate count task${result.createdTasks === 1 ? "" : "s"} across ${result.selectedLocations} location${result.selectedLocations === 1 ? "" : "s"}.${result.skippedDuplicates ? ` Skipped ${result.skippedDuplicates} duplicate task${result.skippedDuplicates === 1 ? "" : "s"} for this period.` : ""}`,
       );
       setScheduledLocationIds([]);
-      setManagerTasks(await fetchInventoryTasks());
+      setCycleCountAssigneeId("");
+      setCycleCountInstructions("");
+      const [tasks, plans] = await Promise.all([fetchInventoryTasks(), fetchCycleCountPlans()]);
+      setManagerTasks(tasks);
+      setCycleCountPlans(plans);
+      setOpenPlanId(result.id);
+      setOpenPlanDetail(null);
+      window.scrollTo({ top: document.getElementById("manager-cycle-count-plans")?.offsetTop ?? 0, behavior: "smooth" });
     } catch (error) {
       setTaskMessageTone("error");
       setTaskMessage(
@@ -524,6 +532,23 @@ export function ManagerDashboard({
       );
     } finally {
       setSchedulingTasks(false);
+    }
+  }
+
+  async function openCycleCountPlan(planId: string) {
+    if (openPlanId === planId && openPlanDetail) {
+      setOpenPlanId(null);
+      setOpenPlanDetail(null);
+      return;
+    }
+    setOpenPlanId(planId);
+    setLoadingPlanDetail(true);
+    try {
+      setOpenPlanDetail(await fetchCycleCountPlan(planId));
+    } catch {
+      setOpenPlanDetail(null);
+    } finally {
+      setLoadingPlanDetail(false);
     }
   }
 
@@ -749,47 +774,22 @@ export function ManagerDashboard({
           <label className="text-xs font-extrabold text-[#49617f]">Assign to<select name="assignedToId" required defaultValue="" className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3"><option value="" disabled>Select executive</option>{taskAssignees.map((user)=><option key={user.id} value={user.id}>{user.displayName} — {[user.shift, user.warehouseZone].filter(Boolean).join(" · ") || user.employeeId}</option>)}</select></label>
           <label className="text-xs font-extrabold text-[#49617f]">Due date and time<input name="dueAt" type="datetime-local" value={taskDueValue} onChange={(event)=>setTaskDueValue(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3" /></label>
           <label className="text-xs font-extrabold text-[#49617f] md:col-span-2">Task title<input name="title" required maxLength={150} placeholder={plannedTaskType === "TRANSFER" ? "Move stock to another location" : "Enter a clear task title"} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3" /></label>
-          <label className="text-xs font-extrabold text-[#49617f]">Product<select name="productId" required={["CYCLE_COUNT", "TRANSFER"].includes(plannedTaskType)} value={plannedProductId} onChange={(event) => { setPlannedProductId(event.target.value); setPlannedLocationId(""); setPlannedTransferQuantity(""); setPlannedTransferSourceId(""); setPlannedTransferDestinationId(""); }} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3"><option value="">{["CYCLE_COUNT", "TRANSFER"].includes(plannedTaskType) ? "Select product" : "Not required"}</option>{snapshot?.products.map((product)=><option key={product.id} value={product.id}>{product.sku} — {product.name}</option>)}</select></label>
+          <label className="text-xs font-extrabold text-[#49617f]">Product<select name="productId" required={plannedTaskType === "TRANSFER"} value={plannedProductId} onChange={(event) => { setPlannedProductId(event.target.value); setPlannedLocationId(""); setPlannedTransferQuantity(""); setPlannedTransferSourceId(""); setPlannedTransferDestinationId(""); }} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3"><option value="">{plannedTaskType === "TRANSFER" ? "Select product" : "Not required"}</option>{snapshot?.products.map((product)=><option key={product.id} value={product.id}>{product.sku} — {product.name}</option>)}</select></label>
           {plannedTaskType !== "TRANSFER" && <label className="text-xs font-extrabold text-[#49617f]">
             Location
             <select
               name="locationId"
-              required={plannedTaskType === "CYCLE_COUNT"}
               value={plannedLocationId}
               onChange={(event) => setPlannedLocationId(event.target.value)}
-              disabled={plannedTaskType === "CYCLE_COUNT" && !plannedProductId}
-              className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3 disabled:cursor-not-allowed disabled:bg-[#eef2f7] disabled:text-[#8a9bb0]"
+              className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3"
             >
-              <option value="">
-                {plannedTaskType === "CYCLE_COUNT"
-                  ? plannedProductId
-                    ? cycleCountLocationBalances.length > 0
-                      ? "Select stock location"
-                      : "No location has available stock"
-                    : "Select product first"
-                  : "Not required"}
-              </option>
-              {plannedTaskType === "CYCLE_COUNT"
-                ? cycleCountLocationBalances.map((balance) => {
-                    const available =
-                      balance.quantity - balance.reservedQuantity;
-                    return (
-                      <option key={balance.location.id} value={balance.location.id}>
-                        {balance.location.code} — {balance.location.name} — {available} {balance.product.unit} available
-                      </option>
-                    );
-                  })
-                : snapshot?.locations.map((location) => (
-                    <option key={location.id} value={location.id}>
-                      {location.code} — {location.name}
-                    </option>
-                  ))}
+              <option value="">Not required</option>
+              {snapshot?.locations.map((location) => (
+                <option key={location.id} value={location.id}>
+                  {location.code} — {location.name}
+                </option>
+              ))}
             </select>
-            {plannedTaskType === "CYCLE_COUNT" && plannedProductId && (
-              <span className="mt-1.5 block text-[10px] font-semibold text-[#758aa5]">
-                Only locations with available stock for this product are shown.
-              </span>
-            )}
           </label>}
           {plannedTaskType === "TRANSFER" && <>
             <label className="text-xs font-extrabold text-[#49617f]">
@@ -869,22 +869,33 @@ export function ManagerDashboard({
                 </label>;
               })}
             </div>
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <button type="button" onClick={() => setScheduledLocationIds(snapshot?.locations.filter((location) => snapshot.balances.some((balance) => balance.location.id === location.id && balance.quantity > 0)).map((location) => location.id) ?? [])} className="rounded-lg border border-[#d9c9f0] px-3 py-1.5 text-[10px] font-extrabold text-[#6349c1]">Select all stocked locations</button>
               <button type="button" onClick={() => setScheduledLocationIds([])} className="rounded-lg border border-[#e2e9f3] px-3 py-1.5 text-[10px] font-extrabold text-[#7186a3]">Clear</button>
+              <span className={`ml-auto rounded-full px-3 py-1 text-[10px] font-extrabold ${scheduledLocationIds.length > 0 ? "bg-[#f2efff] text-[#6349c1]" : "bg-[#eef2f7] text-[#7b8fa9]"}`}>
+                {scheduledLocationIds.length} location{scheduledLocationIds.length === 1 ? "" : "s"} selected
+              </span>
             </div>
           </fieldset>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
             <label className="text-xs font-extrabold text-[#49617f]">Count period<input name="schedPeriod" type="month" required value={cycleCountPeriod} onChange={(event) => { setCycleCountPeriod(event.target.value); setCycleCountDueValue(monthEndDueValue(event.target.value)); }} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3" /><span className="mt-1 block text-[10px] font-semibold text-[#8294ac]">Select the month being physically verified.</span></label>
-            <label className="text-xs font-extrabold text-[#49617f]">Assign to<select name="schedAssigneeId" required defaultValue="" className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3"><option value="" disabled>Select executive</option>{taskAssignees.map((user)=><option key={user.id} value={user.id}>{user.displayName} — {[user.shift, user.warehouseZone].filter(Boolean).join(" · ") || user.employeeId}</option>)}</select></label>
+            <label className="text-xs font-extrabold text-[#49617f]">Assign to<select name="schedAssigneeId" required value={cycleCountAssigneeId} onChange={(event) => setCycleCountAssigneeId(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3"><option value="" disabled>Select executive</option>{taskAssignees.map((user)=><option key={user.id} value={user.id}>{user.displayName} — {[user.shift, user.warehouseZone].filter(Boolean).join(" · ") || user.employeeId}</option>)}</select></label>
             <label className="text-xs font-extrabold text-[#49617f]">Due date and time<input name="schedDueAt" type="datetime-local" required value={cycleCountDueValue} min={`${cycleCountPeriod}-01T00:00`} max={monthEndDueValue(cycleCountPeriod).replace("T17:00", "T23:59")} onChange={(event)=>setCycleCountDueValue(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3" /><span className="mt-1 block text-[10px] font-semibold text-[#8294ac]">Must be within the selected month.</span></label>
             <label className="text-xs font-extrabold text-[#49617f]">Priority<select name="schedPriority" defaultValue="MEDIUM" className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3">{["LOW","MEDIUM","HIGH","URGENT"].map((value)=><option key={value}>{value}</option>)}</select></label>
             <label className="flex h-11 items-center gap-3 self-end rounded-xl border border-[#d9c9f0] bg-white px-3 text-xs font-extrabold text-[#49617f]"><input type="checkbox" checked={blindCycleCount} onChange={(event) => setBlindCycleCount(event.target.checked)} className="h-4 w-4 accent-[#7257d6]" /> Blind count</label>
+            <label className="text-xs font-extrabold text-[#49617f] xl:col-span-2">Instructions<input name="schedInstructions" value={cycleCountInstructions} onChange={(event) => setCycleCountInstructions(event.target.value)} maxLength={1000} placeholder="Optional instructions for the executive" className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3" /></label>
           </div>
-          <div className="mt-4 grid gap-3 rounded-xl border border-[#e0cbf5] bg-white p-4 sm:grid-cols-3">
-            <div><p className="text-[10px] font-extrabold uppercase tracking-wider text-[#8a7bb0]">Locations</p><p className="mt-1 text-xl font-black text-[#3f3470]">{cycleCountPlanPreview.locations}</p></div>
-            <div><p className="text-[10px] font-extrabold uppercase tracking-wider text-[#8a7bb0]">Different items</p><p className="mt-1 text-xl font-black text-[#3f3470]">{cycleCountPlanPreview.items}</p></div>
-            <div><p className="text-[10px] font-extrabold uppercase tracking-wider text-[#8a7bb0]">Tasks generated</p><p className="mt-1 text-xl font-black text-[#3f3470]">{cycleCountPlanPreview.tasks}</p></div>
+          <div className="mt-4 rounded-xl border border-[#e0cbf5] bg-white p-4">
+            <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#8a7bb0]">Plan preview</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div><p className="text-[10px] font-extrabold uppercase tracking-wider text-[#8a7bb0]">Period</p><p className="mt-1 text-sm font-black text-[#3f3470]">{formatCountPeriod(cycleCountPeriod) || cycleCountPeriod}</p></div>
+              <div><p className="text-[10px] font-extrabold uppercase tracking-wider text-[#8a7bb0]">Locations</p><p className="mt-1 text-sm font-black text-[#3f3470]">{cycleCountPlanPreview.locations}</p></div>
+              <div><p className="text-[10px] font-extrabold uppercase tracking-wider text-[#8a7bb0]">Different items</p><p className="mt-1 text-sm font-black text-[#3f3470]">{cycleCountPlanPreview.items}</p></div>
+              <div><p className="text-[10px] font-extrabold uppercase tracking-wider text-[#8a7bb0]">Tasks generated</p><p className="mt-1 text-sm font-black text-[#3f3470]">{cycleCountPlanPreview.tasks}</p></div>
+              <div><p className="text-[10px] font-extrabold uppercase tracking-wider text-[#8a7bb0]">Assigned executive</p><p className="mt-1 text-sm font-black text-[#3f3470]">{taskAssignees.find((user) => user.id === cycleCountAssigneeId)?.displayName ?? "Not selected"}</p></div>
+              <div><p className="text-[10px] font-extrabold uppercase tracking-wider text-[#8a7bb0]">Due date</p><p className="mt-1 text-sm font-black text-[#3f3470]">{cycleCountDueValue ? new Intl.DateTimeFormat("en", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(cycleCountDueValue)) : "Not set"}</p></div>
+              <div><p className="text-[10px] font-extrabold uppercase tracking-wider text-[#8a7bb0]">Blind count</p><p className="mt-1 text-sm font-black text-[#3f3470]">{blindCycleCount ? "Yes — system quantity hidden" : "No"}</p></div>
+            </div>
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <span className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#8a7bb0]">Selected period: {cycleCountPeriod}</span>
@@ -892,6 +903,78 @@ export function ManagerDashboard({
             <button disabled={!taskAssignees.length || schedulingTasks || cycleCountPlanPreview.tasks === 0} className="ml-auto h-11 rounded-xl bg-[#7257d6] px-5 text-sm font-extrabold text-white shadow-[0_10px_24px_rgba(114,87,214,0.2)] disabled:cursor-wait disabled:opacity-50">{schedulingTasks ? "Scheduling…" : `Schedule ${cycleCountPlanPreview.tasks} count tasks`}</button>
           </div>
         </form>
+
+        <section id="manager-cycle-count-plans" className="mt-6 scroll-mt-24 rounded-2xl border border-[#e0cbf5] bg-white p-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#7257d6]">Month-End Cycle Count</p>
+              <h3 className="mt-1 text-sm font-extrabold text-[#17345f]">Cycle Count Plans</h3>
+              <p className="mt-1 text-xs text-[#8294ac]">Every generated multi-location count plan with live task and discrepancy status. Open a plan to see each task.</p>
+            </div>
+            <span className="w-fit rounded-full bg-[#f2efff] px-3 py-1 text-[10px] font-extrabold text-[#6349c1]">{cycleCountPlans.length} plan{cycleCountPlans.length === 1 ? "" : "s"}</span>
+          </div>
+          {cycleCountPlans.length === 0 ? (
+            <div className="mt-4 rounded-xl border border-dashed border-[#d9c9f0] bg-[#faf7ff] px-5 py-8 text-center">
+              <ClipboardCheck size={22} className="mx-auto text-[#a89ad6]" />
+              <p className="mt-2 text-sm font-extrabold text-[#24466f]">No cycle count plans yet</p>
+              <p className="mt-1 text-xs text-[#8294ac]">Scheduled plans appear here with their task progress.</p>
+            </div>
+          ) : (
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full text-left">
+                <thead className="bg-[#faf6ff] text-[10px] uppercase tracking-[0.12em] text-[#8a7bb0]">
+                  <tr>
+                    {["Plan", "Period", "Locations", "Assigned worker", "Total", "Open", "Completed", "Discrepancies", "Status", "Due date"].map((heading) => (
+                      <th key={heading} className="whitespace-nowrap px-4 py-3 font-extrabold">{heading}</th>
+                    ))}
+                    <th className="px-4 py-3" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#f0ebfb] text-xs">
+                  {cycleCountPlans.map((plan) => {
+                    const open = openPlanId === plan.id;
+                    return (
+                      <Fragment key={plan.id}>
+                        <tr className="transition hover:bg-[#faf7ff]">
+                          <td className="whitespace-nowrap px-4 py-3.5 font-extrabold text-[#6349c1]">{plan.planNumber}</td>
+                          <td className="whitespace-nowrap px-4 py-3.5 font-bold text-[#29466f]">{formatCountPeriod(plan.periodMonth)}</td>
+                          <td className="whitespace-nowrap px-4 py-3.5 text-[#6c829f]">{(plan.locations ?? []).map((location) => location.name).join(", ") || "—"}</td>
+                          <td className="whitespace-nowrap px-4 py-3.5 font-bold text-[#496482]">{plan.assignedTo?.displayName ?? "—"}</td>
+                          <td className="whitespace-nowrap px-4 py-3.5 font-extrabold text-[#3f3470]">{plan.totalTasks ?? 0}</td>
+                          <td className="whitespace-nowrap px-4 py-3.5 font-bold text-[#155eef]">{plan.openTasks ?? 0}</td>
+                          <td className="whitespace-nowrap px-4 py-3.5 font-bold text-[#16865b]">{plan.completedTasks ?? 0}</td>
+                          <td className="whitespace-nowrap px-4 py-3.5">
+                            <span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${(plan.discrepancyCount ?? 0) > 0 ? "bg-[#fff1e3] text-[#c56c08]" : "bg-[#eef2f7] text-[#7b8fa9]"}`}>{plan.discrepancyCount ?? 0}</span>
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3.5"><span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${plan.status === "COMPLETED" ? "bg-[#eaf8f1] text-[#16865b]" : plan.status === "IN_PROGRESS" ? "bg-[#f2efff] text-[#6349c1]" : plan.status === "CANCELLED" ? "bg-[#eef2f7] text-[#7b8fa9]" : "bg-[#edf4ff] text-[#155eef]"}`}>{(plan.status ?? "OPEN").replaceAll("_", " ")}</span></td>
+                          <td className="whitespace-nowrap px-4 py-3.5 text-[#6c829f]">{plan.dueAt ? new Intl.DateTimeFormat("en", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(plan.dueAt)) : "—"}</td>
+                          <td className="whitespace-nowrap px-4 py-3.5">
+                            <button type="button" onClick={() => void openCycleCountPlan(plan.id)} disabled={loadingPlanDetail && open} className="rounded-lg border border-[#d9c9f0] bg-white px-3 py-1.5 text-[10px] font-extrabold text-[#6349c1] transition hover:bg-[#f2efff] disabled:opacity-50">
+                              {loadingPlanDetail && open ? "Loading…" : open ? "Hide tasks" : "View tasks"}
+                            </button>
+                          </td>
+                        </tr>
+                        {open && (
+                          <tr>
+                            <td colSpan={11} className="bg-[#faf7ff] px-4 py-4">
+                              {loadingPlanDetail && !openPlanDetail ? (
+                                <p className="px-3 py-6 text-center text-xs font-semibold text-[#8a7bb0]">Loading plan tasks…</p>
+                              ) : openPlanDetail && openPlanDetail.id === plan.id ? (
+                                <PlanTaskList plan={openPlanDetail} />
+                              ) : (
+                                <p className="px-3 py-6 text-center text-xs font-semibold text-[#a73737]">The plan tasks could not be loaded. Try again.</p>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
 
         <div className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1467,6 +1550,47 @@ export function ManagerDashboard({
 
 
       <AdministratorDashboard managerMode page={page} />
+    </div>
+  );
+}
+
+function PlanTaskList({ plan }: { plan: ApiCycleCountPlanDetail }) {
+  return (
+    <div className="rounded-xl border border-[#e0cbf5] bg-white p-4">
+      <div className="flex flex-col gap-2 border-b border-[#f0ebfb] pb-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs font-extrabold text-[#3f3470]">{plan.title}</p>
+          <p className="mt-0.5 text-[10px] font-bold text-[#8a7bb0]">{plan.planNumber} · Count period {formatCountPeriod(plan.periodMonth)}{plan.blindCount ? " · Blind count" : ""}</p>
+        </div>
+        <span className={`w-fit rounded-full px-2.5 py-1 text-[10px] font-extrabold ${plan.status === "COMPLETED" ? "bg-[#eaf8f1] text-[#16865b]" : "bg-[#edf4ff] text-[#155eef]"}`}>{(plan.status ?? "OPEN").replaceAll("_", " ")}</span>
+      </div>
+      {plan.instructions && (
+        <p className="mt-3 rounded-lg bg-[#faf6ff] px-3 py-2 text-[11px] font-semibold leading-5 text-[#5a4696]">Instructions: {plan.instructions}</p>
+      )}
+      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+        {plan.tasks.map((task) => (
+          <article key={task.id} className="rounded-xl border border-[#e9e2f7] bg-[#faf7ff] p-3">
+            <div className="flex items-start justify-between gap-2">
+              <p className="truncate text-xs font-extrabold text-[#29466f]">{task.product?.name ?? task.title}</p>
+              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-extrabold ${taskStatusTone(task.status)}`}>{task.status.replaceAll("_", " ")}</span>
+            </div>
+            <p className="mt-1 text-[10px] font-semibold text-[#7b8fa9]">{task.location?.name ?? "Location missing"}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {task.priority !== "MEDIUM" && <span className={`rounded-full px-2 py-0.5 text-[9px] font-extrabold ${priorityTone(task.priority)}`}>{task.priority}</span>}
+              {task.dueAt && <span className="rounded-full bg-[#fff5df] px-2 py-0.5 text-[9px] font-extrabold text-[#b36d0c]">{formatTaskDue(task.dueAt)}</span>}
+            </div>
+            {task.discrepancies.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {task.discrepancies.map((entry) => (
+                  <p key={entry.id} className="rounded-lg bg-[#fff1e3] px-2.5 py-1.5 text-[10px] font-bold text-[#c56c08]">
+                    {entry.caseNumber} · {entry.status.replaceAll("_", " ")} · counted {entry.countedQuantity} vs expected {entry.expectedQuantity}
+                  </p>
+                ))}
+              </div>
+            )}
+          </article>
+        ))}
+      </div>
     </div>
   );
 }

@@ -38,6 +38,16 @@ export function formatTaskDue(dueAt?: string | null) {
   return `Due ${new Intl.DateTimeFormat("en", { day: "2-digit", month: "short" }).format(date)}`;
 }
 
+/** "2026-08" → "August 2026" for cycle-count period display. */
+export function formatCountPeriod(periodMonth?: string | null) {
+  if (!periodMonth) return "";
+  const [year, month] = periodMonth.split("-").map(Number);
+  if (!year || !month || month < 1 || month > 12) return periodMonth;
+  return new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" }).format(
+    new Date(Date.UTC(year, month - 1, 1)),
+  );
+}
+
 export function defaultDueDate(days: number) {
   const date = new Date();
   date.setDate(date.getDate() + days);

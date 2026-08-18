@@ -19,6 +19,7 @@ const notificationTypeLabel: Record<string, string> = {
   DISCREPANCY_APPROVED: "Discrepancy approved",
   DISCREPANCY_REJECTED: "Discrepancy rejected",
   RESOLVED_AS_TRANSFER: "Resolved as transfer",
+  CYCLE_COUNT_PLAN_ASSIGNED: "Month-end cycle count",
 };
 
 export function NotificationsBell({
