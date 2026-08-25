@@ -1,0 +1,488 @@
+From 0e645f1fb8d746b8d048fea06e5dae4d9f068dcc Mon Sep 17 00:00:00 2001
+From: Prit Patel <prit.patel00@users.noreply.github.com>
+Date: Tue, 25 Aug 2026 10:33:59 +0000
+Subject: [PATCH] Phase 2: production config for Railway (API, speech,
+ frontend)
+
+- Add Dockerfiles for backend/api, backend/speech, and frontend
+  (frontend now runs as a self-hosted Node server on Railway, not
+  Vercel, since it runs on vinext which has no Vercel adapter)
+- Set output: "standalone" in frontend/next.config.ts
+- Replace hardcoded localhost URLs in keycloak.ts and inventory-api.ts
+  with NEXT_PUBLIC_* env vars (localhost fallback preserved for dev)
+- Add prisma migrate deploy / migrate status scripts for production
+  migrations (migrate dev is dev-only, never used in production)
+- Enable NestJS shutdown hooks and add safe (no-secrets) startup log
+- Add .env.example for root, frontend, backend/api, backend/speech
+  documenting exact variable names found in source
+- Fix .gitignore so .env.example files aren't swallowed by the .env*
+  exclusion, and add IDE temp file / speech venv patterns
+---
+ .env.example                                  | 10 +++
+ .gitignore                                    | 12 ++++
+ backend/api/.env.example                      | 55 +++++++++++++++
+ backend/api/Dockerfile                        | 67 +++++++++++++++++++
+ backend/api/package.json                      |  2 +
+ backend/api/src/main.ts                       |  9 +++
+ backend/speech/.env.example                   | 24 +++++++
+ backend/speech/Dockerfile                     | 37 ++++++++++
+ frontend/.env.example                         | 24 +++++++
+ frontend/Dockerfile                           | 57 ++++++++++++++++
+ frontend/next.config.ts                       |  6 +-
+ .../features/inventory/api/inventory-api.ts   |  2 +-
+ .../src/features/inventory/auth/keycloak.ts   |  6 +-
+ package.json                                  |  2 +
+ 14 files changed, 308 insertions(+), 5 deletions(-)
+ create mode 100644 .env.example
+ create mode 100644 backend/api/.env.example
+ create mode 100644 backend/api/Dockerfile
+ create mode 100644 backend/speech/.env.example
+ create mode 100644 backend/speech/Dockerfile
+ create mode 100644 frontend/.env.example
+ create mode 100644 frontend/Dockerfile
+
+diff --git a/.env.example b/.env.example
+new file mode 100644
+index 0000000..2f42a6a
+--- /dev/null
++++ b/.env.example
+@@ -0,0 +1,10 @@
++# Root workspace .env.example.
++# This file documents variable names and purpose only — no real values.
++# Each service (frontend, backend/api, backend/speech) also has its own
++# .env.example with the variables specific to that service.
++#
++# For local development, copy the relevant file(s) to .env / .env.local in
++# each service directory and fill in real values. Never commit filled-in
++# .env files — .gitignore already excludes .env*.
++
++NODE_ENV=development
+diff --git a/.gitignore b/.gitignore
+index 730fa7e..bc75626 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -51,6 +51,8 @@ backend/api/logs/*.log
+ 
+ # env files (can opt-in for committing if needed)
+ .env*
++!.env.example
++!**/.env.example
+ 
+ # vercel
+ .vercel
+@@ -78,3 +80,13 @@ next-env.d.ts
+ /hive/
+ /roster-backups/
+ /roster.json
++
++# IDE-specific temporary files
++.idea/
++*.swp
++*.swo
++*~
++
++# speech-service model cache / python venv if built locally outside .local
++backend/speech/.venv/
++backend/speech/.cache/
+diff --git a/backend/api/.env.example b/backend/api/.env.example
+new file mode 100644
+index 0000000..953e170
+--- /dev/null
++++ b/backend/api/.env.example
+@@ -0,0 +1,55 @@
++# NestJS API environment variables.
++# Names below are copied exactly from what backend/api/src actually reads
++# (grepped from source) — do not rename these when configuring Railway.
++
++# --- Core ---
++NODE_ENV=production
++# Railway injects PORT automatically; only set this manually for local runs.
++PORT=4000
++
++# --- Database (Railway PostgreSQL plugin provides this automatically as a
++# reference variable — usually you won't set this by hand) ---
++DATABASE_URL=postgresql://user:password@host:5432/database?schema=public
++
++# --- Frontend origin, used for CORS (must exactly match the deployed
++# frontend URL, including https:// and no trailing slash) ---
++WEB_APP_ORIGIN=http://localhost:3000
++
++# --- Keycloak ---
++# Full issuer URL including realm, e.g.
++# https://nirka-keycloak.up.railway.app/realms/nirka-inventory
++KEYCLOAK_ISSUER=http://localhost:8080/realms/nirka-inventory
++# Expected audience/client id on incoming access tokens.
++KEYCLOAK_AUDIENCE=nirka-inventory-api
++# Base URL of the Keycloak server without the realm path (derived from
++# KEYCLOAK_ISSUER if omitted).
++KEYCLOAK_BASE_URL=http://localhost:8080
++# Realm name (derived from KEYCLOAK_ISSUER if omitted).
++KEYCLOAK_REALM=nirka-inventory
++# Confidential client used by the API for Keycloak Admin REST calls
++# (user activation/deactivation, user access page). This is a SECRET —
++# generate it in Keycloak, never commit the real value.
++KEYCLOAK_USER_ADMIN_CLIENT_ID=nirka-inventory-user-admin
++KEYCLOAK_USER_ADMIN_CLIENT_SECRET=
++
++# --- Speech-to-text service (Railway private networking URL) ---
++SPEECH_SERVICE_URL=http://127.0.0.1:5001
++
++# --- Ollama AI service (Railway private networking URL) ---
++OLLAMA_URL=http://127.0.0.1:11434
++OLLAMA_MODEL=qwen3:4b
++OLLAMA_KEEP_ALIVE=30m
++OLLAMA_NUM_PREDICT=256
++OLLAMA_NUM_CTX=2048
++OLLAMA_NUM_THREADS=
++
++# --- Evidence storage (must point at a Railway persistent volume mount in
++# production, e.g. /app/evidence — see backend/api/Dockerfile) ---
++EVIDENCE_STORAGE_PATH=../../.local/evidence
++
++# --- Observability (all optional; omit entirely to disable tracing) ---
++OTEL_TRACING_ENABLED=
++OTEL_TRACE_EXPORTER=
++OTEL_EXPORTER_OTLP_ENDPOINT=
++OTEL_PRISMA_INSTRUMENTATION=
++METRICS_PORT=
+diff --git a/backend/api/Dockerfile b/backend/api/Dockerfile
+new file mode 100644
+index 0000000..7b372fb
+--- /dev/null
++++ b/backend/api/Dockerfile
+@@ -0,0 +1,67 @@
++# Production image for the NestJS inventory API.
++#
++# IMPORTANT: build context must be the REPOSITORY ROOT, not backend/api/.
++# backend/api/package.json depends on "inventory-management-workspace":
++# "file:../..", so the workspace root package.json must be reachable
++# during npm ci. On Railway: set this service's "Root Directory" to the
++# repo root, and point the Dockerfile path at backend/api/Dockerfile.
++#
++#   docker build -f backend/api/Dockerfile .
++
++FROM node:22.13-bookworm-slim AS base
++WORKDIR /repo
++# Prisma's query engine needs openssl at runtime on Debian.
++RUN apt-get update && apt-get install -y --no-install-recommends openssl \
++    && rm -rf /var/lib/apt/lists/*
++
++# --- deps ---
++FROM base AS deps
++COPY package.json ./package.json
++COPY backend/api/package.json backend/api/package-lock.json ./backend/api/
++WORKDIR /repo/backend/api
++RUN npm ci
++
++# --- build ---
++FROM base AS build
++COPY package.json ./package.json
++COPY backend/api ./backend/api
++COPY --from=deps /repo/backend/api/node_modules ./backend/api/node_modules
++WORKDIR /repo/backend/api
++RUN npm run db:generate
++RUN npm run build
++
++# --- prod deps only (smaller runtime image) ---
++FROM base AS prod-deps
++COPY package.json ./package.json
++COPY backend/api/package.json backend/api/package-lock.json ./backend/api/
++WORKDIR /repo/backend/api
++RUN npm ci --omit=dev
++# The Prisma client generated against devDependencies' prisma CLI must be
++# regenerated here too, since generate writes into node_modules/@prisma/client.
++COPY backend/api/prisma ./prisma
++RUN npx prisma generate
++
++# --- runtime ---
++FROM node:22.13-bookworm-slim AS runtime
++WORKDIR /app
++RUN apt-get update && apt-get install -y --no-install-recommends openssl \
++    && rm -rf /var/lib/apt/lists/*
++ENV NODE_ENV=production
++RUN groupadd --system nirka && useradd --system --gid nirka --home /app nirka
++
++COPY --from=prod-deps /repo/backend/api/node_modules ./node_modules
++COPY --from=build /repo/backend/api/dist ./dist
++COPY --from=build /repo/backend/api/prisma ./prisma
++COPY --from=build /repo/backend/api/package.json ./package.json
++
++# Evidence storage volume mount point (see EVIDENCE_STORAGE_PATH).
++RUN mkdir -p /app/evidence && chown -R nirka:nirka /app
++
++USER nirka
++
++# Railway injects PORT; main.ts reads it (defaults to 4000).
++EXPOSE 4000
++
++# Run pending migrations, then start. Uses `migrate deploy`, never
++# `migrate dev`, and never seeds or resets data automatically.
++CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main.js"]
+diff --git a/backend/api/package.json b/backend/api/package.json
+index de31b55..9cce564 100644
+--- a/backend/api/package.json
++++ b/backend/api/package.json
+@@ -8,6 +8,8 @@
+     "start:dev": "nest start --watch",
+     "db:generate": "prisma generate",
+     "db:migrate": "prisma migrate dev",
++    "db:migrate:deploy": "prisma migrate deploy",
++    "db:migrate:status": "prisma migrate status",
+     "db:seed": "prisma db seed",
+     "db:reset": "tsx prisma/reset-database.ts && npm run db:seed && npm run db:seed:catalog",
+     "db:reset:demo": "tsx prisma/reset-database.ts && npm run db:seed && npm run db:seed:demo",
+diff --git a/backend/api/src/main.ts b/backend/api/src/main.ts
+index b038c09..76e525b 100644
+--- a/backend/api/src/main.ts
++++ b/backend/api/src/main.ts
+@@ -25,6 +25,11 @@ async function bootstrap() {
+   const app = await NestFactory.create(AppModule);
+   const port = Number(process.env.PORT ?? 4000);
+ 
++  // Ensures Nest's onModuleDestroy/beforeApplicationShutdown hooks (e.g.
++  // Prisma closing its DB connection pool) run on SIGTERM/SIGINT, so
++  // Railway restarts and redeploys don't leave connections dangling.
++  app.enableShutdownHooks();
++
+   app.setGlobalPrefix("api");
+   app.enableCors({
+     origin: process.env.WEB_APP_ORIGIN ?? "http://localhost:3000",
+@@ -52,6 +57,10 @@ async function bootstrap() {
+   SwaggerModule.setup("api/docs", app, document);
+ 
+   await app.listen(port);
++  // eslint-disable-next-line no-console
++  console.log(
++    `Nirka Inventory API listening on port ${port} (env: ${process.env.NODE_ENV ?? "development"}, CORS origin: ${process.env.WEB_APP_ORIGIN ?? "http://localhost:3000"})`,
++  );
+ }
+ 
+ void bootstrap();
+diff --git a/backend/speech/.env.example b/backend/speech/.env.example
+new file mode 100644
+index 0000000..4d6982a
+--- /dev/null
++++ b/backend/speech/.env.example
+@@ -0,0 +1,24 @@
++# faster-whisper speech-to-text service environment variables.
++# Names copied exactly from backend/speech/app/main.py.
++
++# Railway injects PORT automatically for container start.
++PORT=5001
++
++# Whisper model size. "base" is the current default (see
++# infrastructure/start-local-speech.ps1). Larger models need more RAM —
++# check Railway plan memory before changing this.
++WHISPER_MODEL=base
++WHISPER_DEVICE=cpu
++WHISPER_COMPUTE_TYPE=int8
++
++# Directory used to cache downloaded model weights so they are not
++# re-downloaded on every deploy/restart. Point this at a Railway
++# persistent volume mount, e.g. /app/.cache/whisper-models.
++WHISPER_MODEL_CACHE=/app/.cache/whisper-models
++
++# Beam size for decoding; 1 = greedy/fastest, higher = slower but can be
++# slightly more accurate on longer or ambiguous audio.
++WHISPER_BEAM_SIZE=1
++
++# Domain-specific prompt to bias transcription toward warehouse vocabulary.
++WHISPER_INITIAL_PROMPT=Warehouse inventory. Actions: receive, ship, transfer, cycle count, damage. Items: cable, helmet, gloves, tape, box, bottle, bolt, bearing. Locations: receiving, dispatch, packing, storage one, storage two, storage three.
+diff --git a/backend/speech/Dockerfile b/backend/speech/Dockerfile
+new file mode 100644
+index 0000000..dccfc6f
+--- /dev/null
++++ b/backend/speech/Dockerfile
+@@ -0,0 +1,37 @@
++# Production image for the faster-whisper speech-to-text service.
++# Build context is backend/speech/ itself (no workspace file: dependency here).
++#
++#   docker build -f backend/speech/Dockerfile backend/speech
++
++FROM python:3.12-slim AS base
++WORKDIR /app
++
++# ffmpeg is required by faster-whisper/ctranslate2's audio decoding path for
++# non-WAV uploads (webm/ogg/mp4 from the browser MediaRecorder API).
++RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
++    && rm -rf /var/lib/apt/lists/*
++
++COPY requirements.txt .
++RUN pip install --no-cache-dir -r requirements.txt
++
++COPY app ./app
++
++RUN groupadd --system nirka && useradd --system --gid nirka --home /app nirka \
++    && mkdir -p /app/.cache/whisper-models \
++    && chown -R nirka:nirka /app
++USER nirka
++
++# WHISPER_MODEL_CACHE should point at a Railway persistent volume so the
++# model is downloaded once, not on every deploy/restart.
++ENV WHISPER_MODEL_CACHE=/app/.cache/whisper-models \
++    WHISPER_MODEL=base \
++    WHISPER_DEVICE=cpu \
++    WHISPER_COMPUTE_TYPE=int8
++
++# Keep this service private on Railway (no public domain) — the API reaches
++# it over Railway's private network via SPEECH_SERVICE_URL.
++EXPOSE 5001
++
++# Railway injects PORT; uvicorn binds it directly since main.py has no
++# hardcoded port itself (only the old local .ps1 launcher did).
++CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-5001}"]
+diff --git a/frontend/.env.example b/frontend/.env.example
+new file mode 100644
+index 0000000..efafe9a
+--- /dev/null
++++ b/frontend/.env.example
+@@ -0,0 +1,24 @@
++# Frontend environment variables.
++#
++# IMPORTANT: only NEXT_PUBLIC_* variables are readable by the app, and
++# vinext inlines them into the browser bundle AT BUILD TIME (not read at
++# container start). Never put secrets here — everything below is visible
++# to anyone who opens the site's JavaScript.
++#
++# Local development: all four already default to localhost in code
++# (see src/features/inventory/auth/keycloak.ts and
++# src/features/inventory/api/inventory-api.ts), so this file is only
++# required for production builds.
++
++# Public URL of the NestJS API, e.g. https://nirka-api.up.railway.app/api
++NEXT_PUBLIC_API_URL=
++
++# Public URL of Keycloak, e.g. https://nirka-keycloak.up.railway.app
++NEXT_PUBLIC_KEYCLOAK_URL=
++
++# Keycloak realm name (matches infrastructure/keycloak/nirka-inventory-realm.json)
++NEXT_PUBLIC_KEYCLOAK_REALM=nirka-inventory
++
++# Keycloak public/web client id (must be the PUBLIC client, not the API's
++# confidential client — never put a client secret in a frontend variable)
++NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=nirka-inventory-web
+diff --git a/frontend/Dockerfile b/frontend/Dockerfile
+new file mode 100644
+index 0000000..c18a25d
+--- /dev/null
++++ b/frontend/Dockerfile
+@@ -0,0 +1,57 @@
++# Production image for the vinext (Next.js-on-Vite) frontend.
++# Runs as a plain Node server (frontend/next.config.ts sets output: "standalone"),
++# not on Vercel or Cloudflare Workers.
++#
++# IMPORTANT: build context must be the REPOSITORY ROOT, not frontend/.
++# frontend/package.json depends on "inventory-management-workspace": "file:..",
++# so the workspace root package.json must be reachable during npm ci.
++# On Railway: set this service's "Root Directory" to the repo root, and
++# point the Dockerfile path at frontend/Dockerfile.
++#
++#   docker build -f frontend/Dockerfile .
++
++FROM node:22.13-bookworm-slim AS base
++WORKDIR /repo
++
++# --- deps ---
++FROM base AS deps
++COPY package.json ./package.json
++COPY frontend/package.json frontend/package-lock.json ./frontend/
++WORKDIR /repo/frontend
++RUN npm ci
++
++# --- build ---
++FROM base AS build
++COPY package.json ./package.json
++COPY frontend ./frontend
++COPY --from=deps /repo/frontend/node_modules ./frontend/node_modules
++WORKDIR /repo/frontend
++ENV NODE_ENV=production
++# NEXT_PUBLIC_* values are inlined into the client bundle at build time, so
++# they must be passed as build args, not just runtime env vars.
++ARG NEXT_PUBLIC_API_URL
++ARG NEXT_PUBLIC_KEYCLOAK_URL
++ARG NEXT_PUBLIC_KEYCLOAK_REALM
++ARG NEXT_PUBLIC_KEYCLOAK_CLIENT_ID
++ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
++ENV NEXT_PUBLIC_KEYCLOAK_URL=${NEXT_PUBLIC_KEYCLOAK_URL}
++ENV NEXT_PUBLIC_KEYCLOAK_REALM=${NEXT_PUBLIC_KEYCLOAK_REALM}
++ENV NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=${NEXT_PUBLIC_KEYCLOAK_CLIENT_ID}
++RUN npm run build
++
++# --- runtime: only the standalone output, non-root user ---
++FROM node:22.13-bookworm-slim AS runtime
++WORKDIR /app
++ENV NODE_ENV=production
++RUN groupadd --system nirka && useradd --system --gid nirka --home /app nirka
++
++COPY --from=build /repo/frontend/dist/standalone ./
++COPY --from=build /repo/frontend/public ./public
++
++USER nirka
++
++# Railway injects PORT; vinext's standalone server reads PORT/HOST.
++ENV HOST=0.0.0.0
++EXPOSE 3000
++
++CMD ["node", "server.js"]
+diff --git a/frontend/next.config.ts b/frontend/next.config.ts
+index e9ffa30..523ea62 100644
+--- a/frontend/next.config.ts
++++ b/frontend/next.config.ts
+@@ -1,7 +1,11 @@
+ import type { NextConfig } from "next";
+ 
+ const nextConfig: NextConfig = {
+-  /* config options here */
++  // Railway hosts this app as a plain Node server rather than on Vercel or
++  // Cloudflare Workers (vinext's native target). "standalone" makes
++  // `vinext build` emit a self-hosting bundle at dist/standalone/server.js,
++  // started with `node dist/standalone/server.js` and reading PORT/HOST.
++  output: "standalone",
+ };
+ 
+ export default nextConfig;
+diff --git a/frontend/src/features/inventory/api/inventory-api.ts b/frontend/src/features/inventory/api/inventory-api.ts
+index 76adb02..65e1b30 100644
+--- a/frontend/src/features/inventory/api/inventory-api.ts
++++ b/frontend/src/features/inventory/api/inventory-api.ts
+@@ -1,7 +1,7 @@
+ import type { InventoryTransaction, LowStockItem } from "../types";
+ import { keycloak } from "../auth/keycloak";
+ 
+-const API_BASE_URL = "http://localhost:4000/api";
++const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
+ let accessToken: string | null = null;
+ let tokenRefreshPromise: Promise<void> | null = null;
+ 
+diff --git a/frontend/src/features/inventory/auth/keycloak.ts b/frontend/src/features/inventory/auth/keycloak.ts
+index f2155ff..24c55ca 100644
+--- a/frontend/src/features/inventory/auth/keycloak.ts
++++ b/frontend/src/features/inventory/auth/keycloak.ts
+@@ -3,9 +3,9 @@ import Keycloak from "keycloak-js";
+ import type { Role } from "../types";
+ 
+ export const keycloak = new Keycloak({
+-  url: "http://localhost:8080",
+-  realm: "nirka-inventory",
+-  clientId: "nirka-inventory-web",
++  url: process.env.NEXT_PUBLIC_KEYCLOAK_URL ?? "http://localhost:8080",
++  realm: process.env.NEXT_PUBLIC_KEYCLOAK_REALM ?? "nirka-inventory",
++  clientId: process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID ?? "nirka-inventory-web",
+ });
+ 
+ let initialization: Promise<boolean> | null = null;
+diff --git a/package.json b/package.json
+index b6a51f0..de33583 100644
+--- a/package.json
++++ b/package.json
+@@ -21,6 +21,8 @@
+     "api:test": "npm test --prefix backend/api -- --runInBand",
+     "api:db:generate": "npm run db:generate --prefix backend/api",
+     "api:db:migrate": "npm run db:migrate --prefix backend/api",
++    "api:db:migrate:deploy": "npm run db:migrate:deploy --prefix backend/api",
++    "api:db:migrate:status": "npm run db:migrate:status --prefix backend/api",
+     "api:db:seed": "npm run db:seed --prefix backend/api",
+     "api:db:reset": "npm run db:reset --prefix backend/api",
+     "api:db:reset:demo": "npm run db:reset:demo --prefix backend/api",
+-- 
+2.43.0
