@@ -8,6 +8,8 @@
     "start:dev": "nest start --watch",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:migrate:status": "prisma migrate status",
     "db:seed": "prisma db seed",
     "db:reset": "tsx prisma/reset-database.ts && npm run db:seed && npm run db:seed:catalog",
     "db:reset:demo": "tsx prisma/reset-database.ts && npm run db:seed && npm run db:seed:demo",

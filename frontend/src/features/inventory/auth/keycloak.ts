@@ -3,9 +3,9 @@ import Keycloak from "keycloak-js";
 import type { Role } from "../types";
 
 export const keycloak = new Keycloak({
-  url: "http://localhost:8080",
-  realm: "nirka-inventory",
-  clientId: "nirka-inventory-web",
+  url: process.env.NEXT_PUBLIC_KEYCLOAK_URL ?? "http://localhost:8080",
+  realm: process.env.NEXT_PUBLIC_KEYCLOAK_REALM ?? "nirka-inventory",
+  clientId: process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID ?? "nirka-inventory-web",
 });
 
 let initialization: Promise<boolean> | null = null;

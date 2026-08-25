@@ -25,6 +25,11 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const port = Number(process.env.PORT ?? 4000);
 
+  // Ensures Nest's onModuleDestroy/beforeApplicationShutdown hooks (e.g.
+  // Prisma closing its DB connection pool) run on SIGTERM/SIGINT, so
+  // Railway restarts and redeploys don't leave connections dangling.
+  app.enableShutdownHooks();
+
   app.setGlobalPrefix("api");
   app.enableCors({
     origin: process.env.WEB_APP_ORIGIN ?? "http://localhost:3000",
@@ -52,6 +57,10 @@ async function bootstrap() {
   SwaggerModule.setup("api/docs", app, document);
 
   await app.listen(port);
+  // eslint-disable-next-line no-console
+  console.log(
+    `Nirka Inventory API listening on port ${port} (env: ${process.env.NODE_ENV ?? "development"}, CORS origin: ${process.env.WEB_APP_ORIGIN ?? "http://localhost:3000"})`,
+  );
 }
 
 void bootstrap();

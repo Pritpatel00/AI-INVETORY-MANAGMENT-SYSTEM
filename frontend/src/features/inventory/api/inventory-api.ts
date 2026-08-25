@@ -1,7 +1,7 @@
 import type { InventoryTransaction, LowStockItem } from "../types";
 import { keycloak } from "../auth/keycloak";
 
-const API_BASE_URL = "http://localhost:4000/api";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
 let accessToken: string | null = null;
 let tokenRefreshPromise: Promise<void> | null = null;
 

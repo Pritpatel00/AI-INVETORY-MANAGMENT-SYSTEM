@@ -21,6 +21,8 @@
     "api:test": "npm test --prefix backend/api -- --runInBand",
     "api:db:generate": "npm run db:generate --prefix backend/api",
     "api:db:migrate": "npm run db:migrate --prefix backend/api",
+    "api:db:migrate:deploy": "npm run db:migrate:deploy --prefix backend/api",
+    "api:db:migrate:status": "npm run db:migrate:status --prefix backend/api",
     "api:db:seed": "npm run db:seed --prefix backend/api",
     "api:db:reset": "npm run db:reset --prefix backend/api",
     "api:db:reset:demo": "npm run db:reset:demo --prefix backend/api",
