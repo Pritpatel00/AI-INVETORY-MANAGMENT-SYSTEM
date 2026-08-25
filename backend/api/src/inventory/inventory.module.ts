@@ -7,10 +7,9 @@ import { LocationResolverService } from "./location-resolver.service";
 import { TasksModule } from "../tasks/tasks.module";
 import { DiscrepanciesModule } from "../discrepancies/discrepancies.module";
 import { NotificationsModule } from "../notifications/notifications.module";
-import { ReservationsModule } from "../reservations/reservations.module";
 
 @Module({
-  imports: [TasksModule, DiscrepanciesModule, NotificationsModule, ReservationsModule],
+  imports: [TasksModule, DiscrepanciesModule, NotificationsModule],
   controllers: [InventoryController],
   providers: [InventoryService, InventoryRulesEngine, LocationResolverService],
   exports: [LocationResolverService],

@@ -6,7 +6,8 @@ import type { ApiTransaction } from "../api/inventory-api";
 
 function isStockAdjustment(transaction: ApiTransaction) {
   return transaction.referenceNumber?.startsWith("ADJUSTMENT-") === true ||
-    transaction.notes?.startsWith("Administrator correction") === true;
+    transaction.notes?.startsWith("Administrator correction") === true ||
+    transaction.action === "DAMAGE";
 }
 
 function statusTone(status: string) {
@@ -50,7 +51,7 @@ export function AdministratorAuditTransactions({
   function exportCsv() {
     const escape = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
     const rows = [
-      ["Transaction ID", "Date", "Action", "Product", "SKU", "Quantity", "From", "To", "Status", "Created by", "Reviewed by", "Reference", "Notes", "Transcript"],
+      ["Transaction ID", "Date", "Action", "Product", "SKU", "Quantity", "From", "To", "Status", "Created by", "Reviewed by", "Reference", "Notes", "Review notes", "Transcript"],
       ...visibleTransactions.map((transaction) => [
         transaction.id,
         transaction.createdAt,
@@ -65,6 +66,7 @@ export function AdministratorAuditTransactions({
         transaction.approvedBy?.displayName ?? "",
         transaction.referenceNumber ?? "",
         transaction.notes ?? "",
+        transaction.reviewNotes ?? "",
         transaction.transcript ?? "",
       ]),
     ];
@@ -77,9 +79,10 @@ export function AdministratorAuditTransactions({
     URL.revokeObjectURL(url);
   }
 
-  const adjustmentReason = selected?.notes?.includes("Reason:")
-    ? selected.notes.split("Reason:").slice(1).join("Reason:").trim()
-    : selected?.notes ?? "No reason recorded.";
+  const adjustmentReason = selected?.reviewNotes?.trim() ||
+    (selected?.notes?.includes("Reason:")
+      ? selected.notes.split("Reason:").slice(1).join("Reason:").trim()
+      : "No reason recorded.");
 
   return (
     <section id="admin-audit-transactions" className="overflow-hidden rounded-[24px] border border-[#d7e2f0] bg-white shadow-[0_14px_42px_rgba(16,45,82,0.06)]">

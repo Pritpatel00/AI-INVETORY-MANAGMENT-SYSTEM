@@ -7,7 +7,6 @@ import { DiscrepanciesService } from "../discrepancies/discrepancies.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TasksService } from "../tasks/tasks.service";
-import { ReservationsService } from "../reservations/reservations.service";
 import { InventoryService } from "./inventory.service";
 import { InventoryRulesEngine } from "./rules/inventory-rules.engine";
 
@@ -27,7 +26,6 @@ function createService(prisma: object) {
     {} as DiscrepanciesService,
     {} as DiscrepancyAuditService,
     {} as NotificationsService,
-    {} as ReservationsService,
   );
 }
 
@@ -58,7 +56,6 @@ describe("InventoryService Purchase Items cleanup", () => {
           active: true,
           safetyStock: 20,
           reorderQuantity: 40,
-          supplier: null,
         }),
       },
       inventoryBalance: {
@@ -66,7 +63,6 @@ describe("InventoryService Purchase Items cleanup", () => {
           {
             locationId: "location-id",
             quantity: 25,
-            reservedQuantity: 0,
           },
         ]),
       },
@@ -150,11 +146,10 @@ describe("InventoryService Purchase Items cleanup", () => {
           active: true,
           safetyStock: 10,
           reorderQuantity: 20,
-          supplier: null,
         }),
       },
       inventoryBalance: {
-        findMany: jest.fn().mockResolvedValue([{ locationId: "location-id", quantity: 20, reservedQuantity: 0 }]),
+        findMany: jest.fn().mockResolvedValue([{ locationId: "location-id", quantity: 20 }]),
       },
       reorderDraft: {
         findUnique: jest.fn().mockResolvedValue(null),
@@ -188,11 +183,10 @@ describe("InventoryService Purchase Items cleanup", () => {
           active: true,
           safetyStock: 12,
           reorderQuantity: 24,
-          supplier: null,
         }),
       },
       inventoryBalance: {
-        findMany: jest.fn().mockResolvedValue([{ locationId: "location-id", quantity: 0, reservedQuantity: 0 }]),
+        findMany: jest.fn().mockResolvedValue([{ locationId: "location-id", quantity: 0 }]),
       },
       reorderDraft: {
         findUnique: jest.fn().mockResolvedValue(null),

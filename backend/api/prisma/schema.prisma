@@ -34,6 +34,7 @@ enum LocationSource {
   RECEIVING_DEFAULT
   WORKER_ZONE
   CLARIFIED
+  ASSIGNED_TASK
 }
 
 enum TransactionStatus {
@@ -82,6 +83,7 @@ enum DiscrepancyReason {
 }
 
 enum NotificationType {
+  TASK_ASSIGNED
   NEW_DISCREPANCY
   MAJOR_CRITICAL_DISCREPANCY
   RECOUNT_ASSIGNED
@@ -89,10 +91,6 @@ enum NotificationType {
   DISCREPANCY_APPROVED
   DISCREPANCY_REJECTED
   RESOLVED_AS_TRANSFER
-  SHIPMENT_TASK_ASSIGNED
-  SHIPMENT_PREPARED
-  SHIPMENT_COMPLETED
-  SHIPMENT_CANCELLED
   CYCLE_COUNT_PLAN_ASSIGNED
 }
 
@@ -107,25 +105,6 @@ enum DiscrepancyAuditAction {
   RESOLVED_AS_TRANSFER
   PHOTO_UPLOADED
   CASE_CLOSED
-}
-
-enum StockRequestStatus {
-  CONFIRMED
-  PARTIALLY_RESERVED
-  FULLY_RESERVED
-  PARTIALLY_FULFILLED
-  COMPLETED
-  CANCELLED
-  EXPIRED
-}
-
-enum StockReservationStatus {
-  ACTIVE
-  PARTIALLY_SHIPPED
-  COMPLETED
-  RELEASED
-  CANCELLED
-  EXPIRED
 }
 
 model User {
@@ -152,10 +131,6 @@ model User {
   uploadedEvidence        DiscrepancyEvidence[]   @relation("EvidenceUploaders")
   workerAuditEvents       DiscrepancyAuditEvent[] @relation("AuditWorkerEvents")
   managerAuditEvents      DiscrepancyAuditEvent[] @relation("AuditManagerEvents")
-  createdStockRequests    StockRequest[]          @relation("CreatedStockRequests")
-  createdReservations     StockReservation[]      @relation("CreatedReservations")
-  reservationAuditEvents  ReservationAuditEvent[]
-  preparedShipments       InventoryTask[]          @relation("PreparedShipments")
 
   @@map("users")
 }
@@ -183,9 +158,6 @@ model Product {
   unit                   String                       @default("unit")
   safetyStock            Int                          @default(0)
   reorderQuantity        Int                          @default(0)
-  supplierName           String?
-  supplierEmail          String?
-  supplierId             String?
   active                 Boolean                      @default(true)
   controlled             Boolean                      @default(false)
   createdAt              DateTime                     @default(now())
@@ -193,13 +165,9 @@ model Product {
   balances               InventoryBalance[]
   transactions           InventoryTransaction[]
   reorderDrafts          ReorderDraft[]
-  supplier               Supplier?                    @relation(fields: [supplierId], references: [id])
   tasks                  InventoryTask[]
   discrepancies          Discrepancy[]
-  stockRequestLines      StockRequestLine[]
-  reservationAllocations StockReservationAllocation[]
 
-  @@index([supplierId])
   @@map("products")
 }
 
@@ -219,8 +187,6 @@ model Location {
   sourceTasks             InventoryTask[]              @relation("TaskSourceLocation")
   destinationTasks        InventoryTask[]              @relation("TaskDestinationLocation")
   discrepancies           Discrepancy[]
-  reservationAllocations  StockReservationAllocation[]
-
   @@map("locations")
 }
 
@@ -229,7 +195,6 @@ model InventoryBalance {
   productId        String
   locationId       String
   quantity         Int      @default(0)
-  reservedQuantity Int      @default(0)
   updatedAt        DateTime @updatedAt
   product          Product  @relation(fields: [productId], references: [id])
   location         Location @relation(fields: [locationId], references: [id])
@@ -237,99 +202,6 @@ model InventoryBalance {
   @@unique([productId, locationId])
   @@index([locationId])
   @@map("inventory_balances")
-}
-
-model StockRequest {
-  id              String                  @id @default(uuid())
-  requestNumber   String                  @unique @map("request_number")
-  requestType     String                  @map("request_type")
-  referenceNumber String                  @unique @map("reference_number")
-  requestedFor    String                  @map("requested_for")
-  requiredDate    DateTime                @map("required_date")
-  notes           String?
-  status          StockRequestStatus      @default(CONFIRMED)
-  createdById     String                  @map("created_by_id")
-  createdAt       DateTime                @default(now()) @map("created_at")
-  updatedAt       DateTime                @updatedAt @map("updated_at")
-  createdBy       User                    @relation("CreatedStockRequests", fields: [createdById], references: [id])
-  lines           StockRequestLine[]
-  reservations    StockReservation[]
-  auditEvents     ReservationAuditEvent[]
-
-  @@index([status, requiredDate])
-  @@map("stock_requests")
-}
-
-model StockRequestLine {
-  id               String                       @id @default(uuid())
-  stockRequestId   String                       @map("stock_request_id")
-  productId        String                       @map("product_id")
-  requiredQuantity Int                          @map("required_quantity")
-  reservedQuantity Int                          @default(0) @map("reserved_quantity")
-  shippedQuantity  Int                          @default(0) @map("shipped_quantity")
-  request          StockRequest                 @relation(fields: [stockRequestId], references: [id], onDelete: Cascade)
-  product          Product                      @relation(fields: [productId], references: [id])
-  allocations      StockReservationAllocation[]
-
-  @@unique([stockRequestId, productId])
-  @@index([productId])
-  @@map("stock_request_lines")
-}
-
-model StockReservation {
-  id                String                       @id @default(uuid())
-  reservationNumber String                       @unique @map("reservation_number")
-  stockRequestId    String                       @map("stock_request_id")
-  status            StockReservationStatus       @default(ACTIVE)
-  createdById       String                       @map("created_by_id")
-  releaseReason     String?                      @map("release_reason")
-  createdAt         DateTime                     @default(now()) @map("created_at")
-  updatedAt         DateTime                     @updatedAt @map("updated_at")
-  request           StockRequest                 @relation(fields: [stockRequestId], references: [id], onDelete: Cascade)
-  createdBy         User                         @relation("CreatedReservations", fields: [createdById], references: [id])
-  allocations       StockReservationAllocation[]
-  auditEvents       ReservationAuditEvent[]
-  shipmentTasks     InventoryTask[]               @relation("ShipmentTasks")
-
-  @@index([status, createdAt])
-  @@index([stockRequestId])
-  @@map("stock_reservations")
-}
-
-model StockReservationAllocation {
-  id               String           @id @default(uuid())
-  reservationId    String           @map("reservation_id")
-  requestLineId    String           @map("request_line_id")
-  productId        String           @map("product_id")
-  locationId       String           @map("location_id")
-  quantity         Int
-  shippedQuantity  Int              @default(0) @map("shipped_quantity")
-  releasedQuantity Int              @default(0) @map("released_quantity")
-  reservation      StockReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
-  requestLine      StockRequestLine @relation(fields: [requestLineId], references: [id], onDelete: Cascade)
-  product          Product          @relation(fields: [productId], references: [id])
-  location         Location         @relation(fields: [locationId], references: [id])
-
-  @@index([reservationId])
-  @@index([productId, locationId])
-  @@map("stock_reservation_allocations")
-}
-
-model ReservationAuditEvent {
-  id             String            @id @default(uuid())
-  stockRequestId String            @map("stock_request_id")
-  reservationId  String?           @map("reservation_id")
-  action         String
-  details        String?
-  actorId        String            @map("actor_id")
-  createdAt      DateTime          @default(now()) @map("created_at")
-  stockRequest   StockRequest      @relation(fields: [stockRequestId], references: [id], onDelete: Cascade)
-  reservation    StockReservation? @relation(fields: [reservationId], references: [id], onDelete: Cascade)
-  actor          User              @relation(fields: [actorId], references: [id])
-
-  @@index([stockRequestId, createdAt])
-  @@index([reservationId, createdAt])
-  @@map("reservation_audit_events")
 }
 
 model InventoryTransaction {
@@ -413,13 +285,6 @@ enum TaskStatus {
   CANCELLED
 }
 
-model ShipmentReferenceCounter {
-  id        Int   @id
-  lastValue Int   @default(0) @map("last_value")
-
-  @@map("shipment_reference_counters")
-}
-
 model InventoryTask {
   id                        String                 @id @default(uuid())
   type                      TaskType
@@ -453,18 +318,11 @@ model InventoryTask {
   recountResultTransactions InventoryTransaction[] @relation("RecountTaskTransactions")
   countResultTransactions   InventoryTransaction[] @relation("CountTaskTransactions")
   discrepancies             Discrepancy[]          @relation("RecountTaskDiscrepancies")
-  reservationId             String?                @map("reservation_id")
-  reservation               StockReservation?      @relation("ShipmentTasks", fields: [reservationId], references: [id], onDelete: SetNull)
-  shipmentReference         String?                @map("shipment_reference")
-  preparedById              String?                @map("prepared_by_id")
-  preparedBy                User?                  @relation("PreparedShipments", fields: [preparedById], references: [id])
-
   @@index([assignedToId, status, dueAt])
   @@index([status, priority, dueAt])
   @@index([sourceLocationId])
   @@index([destinationLocationId])
   @@index([cycleCountPlanId, status])
-  @@index([reservationId, status])
   @@map("inventory_tasks")
 }
 
@@ -646,22 +504,4 @@ model ReorderDraft {
 
   @@index([status, createdAt])
   @@map("reorder_drafts")
-}
-
-model Supplier {
-  id                   String    @id @default(uuid())
-  code                 String    @unique
-  name                 String
-  contactName          String?
-  email                String?
-  phone                String?
-  address              String?
-  leadTimeDays         Int       @default(0)
-  minimumOrderQuantity Int       @default(0)
-  active               Boolean   @default(true)
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
-  products             Product[]
-
-  @@map("suppliers")
 }

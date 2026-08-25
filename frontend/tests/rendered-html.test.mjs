@@ -128,6 +128,8 @@ test("connects browser recording and controlled AI extraction APIs", async () =>
     /await runExtraction\(result\.text\.trim\(\), result\.evidenceId\)/,
   );
   assert.match(executiveDashboard, /await extractInventoryDetails/);
+  assert.match(executiveDashboard, /AI extraction time/);
+  assert.match(executiveDashboard, /performance\.now\(\)/);
   assert.match(executiveDashboard, /Extract inventory details/);
   assert.match(executiveDashboard, /Answer this question by voice/);
   assert.match(executiveDashboard, /SpeechSynthesisUtterance/);

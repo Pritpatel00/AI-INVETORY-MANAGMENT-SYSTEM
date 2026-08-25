@@ -19,7 +19,7 @@ export class ReorderDecisionDto {
 
   @ApiPropertyOptional({
     description:
-      "Final order quantity set by the manager. Must be at least the supplier minimum order quantity.",
+      "Final purchase quantity set by the manager.",
     minimum: 1,
   })
   @IsOptional()

@@ -20,9 +20,6 @@ import {
   fetchInventorySnapshot,
   fetchDetailedSystemHealth,
   fetchSystemUsers,
-  createSupplier,
-  updateSupplier,
-  deleteSupplier,
   createLocation,
   updateLocation,
   deleteLocation,
@@ -37,14 +34,12 @@ import {
   type ApiProduct,
   type ApiBalance,
   type ApiLocation,
-  type ApiSupplier,
   type ApiSystemUser,
   type ApiSystemHealth,
   type ServiceHealthStatus,
   type InventorySnapshot,
   type ProductInput,
   type LocationInput,
-  type SupplierInput,
 } from "../api/inventory-api";
 import { getAuthenticatedDisplayName } from "../auth/keycloak";
 import { WarehouseHero } from "../shared/WarehouseHero";
@@ -72,7 +67,6 @@ export function AdministratorDashboard({
   const [deletingProductId, setDeletingProductId] = useState<string | null>(null);
   const [adjustingBalance, setAdjustingBalance] = useState<ApiBalance | null>(null);
   const [savingBalanceAdjustment, setSavingBalanceAdjustment] = useState(false);
-  const [suppliers] = useState<ApiSupplier[]>([]);
   const [systemHealth, setSystemHealth] = useState<ApiSystemHealth | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
   const [healthError, setHealthError] = useState("");
@@ -92,12 +86,6 @@ export function AdministratorDashboard({
   const [savingLocation, setSavingLocation] = useState(false);
   const [deletingLocationId, setDeletingLocationId] = useState<string | null>(null);
   const [selectedLocationDetails, setSelectedLocationDetails] = useState<ApiLocation | null>(null);
-  const [showSupplierForm, setShowSupplierForm] = useState(false);
-  const [editingSupplier, setEditingSupplier] = useState<ApiSupplier | null>(null);
-  const [supplierMessage, setSupplierMessage] = useState("");
-  const [supplierError, setSupplierError] = useState(false);
-  const [savingSupplier, setSavingSupplier] = useState(false);
-  const [deletingSupplierId, setDeletingSupplierId] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClockNow(new Date()), 30_000);
@@ -113,14 +101,27 @@ export function AdministratorDashboard({
         setSnapshot(inventory);
       } else {
         const [health, users, inventory] =
-          await Promise.all([
+          await Promise.allSettled([
             fetchDetailedSystemHealth(),
             fetchSystemUsers(),
             fetchInventorySnapshot(),
           ]);
-        setSystemHealth(health);
-        setSystemUsers(users);
-        setSnapshot(inventory);
+        const failedSections: string[] = [];
+        if (health.status === "fulfilled") {
+          setSystemHealth(health.value);
+          setHealthError("");
+        } else {
+          setSystemHealth(null);
+          setHealthError("System health could not be loaded. Verify that the API is running, then refresh health.");
+          failedSections.push("system health");
+        }
+        if (users.status === "fulfilled") setSystemUsers(users.value);
+        else failedSections.push("user access");
+        if (inventory.status === "fulfilled") setSnapshot(inventory.value);
+        else failedSections.push("inventory");
+        if (failedSections.length > 0) {
+          setError(`Some live sections are unavailable: ${failedSections.join(", ")}. Other available administration data is still shown.`);
+        }
       }
     } catch (loadError) {
       setError(
@@ -142,9 +143,9 @@ export function AdministratorDashboard({
       setSystemHealth(await fetchDetailedSystemHealth());
     } catch (healthRefreshError) {
       setHealthError(
-        healthRefreshError instanceof Error
-          ? healthRefreshError.message
-          : "System health data could not be refreshed.",
+        healthRefreshError instanceof Error && healthRefreshError.message.toLowerCase().includes("unauthorized")
+          ? "Your administrator session has expired. Sign in again to view system health."
+          : "System health could not be refreshed. Verify that the API is running, then try again.",
       );
     } finally {
       setHealthLoading(false);
@@ -324,7 +325,7 @@ export function AdministratorDashboard({
     const stockedBalances = (snapshot?.balances ?? []).filter(
       (balance) =>
         balance.product.id === product.id &&
-        (balance.quantity > 0 || balance.reservedQuantity > 0),
+        balance.quantity > 0,
     );
     if (stockedBalances.length > 0 && managerMode) {
       setProductError(true);
@@ -373,7 +374,6 @@ export function AdministratorDashboard({
       await adjustInventoryBalance({
         balanceId: adjustingBalance.id,
         quantity: Number(data.get("quantity")),
-        reservedQuantity: Number(data.get("reservedQuantity")),
         reason: String(data.get("reason") ?? "").trim(),
       });
       setProductMessage(
@@ -445,7 +445,7 @@ export function AdministratorDashboard({
     const relatedBalances = (snapshot?.balances ?? []).filter(
       (balance) => balance.location.id === location.id,
     );
-    if (relatedBalances.some((balance) => balance.quantity > 0 || balance.reservedQuantity > 0)) {
+    if (relatedBalances.some((balance) => balance.quantity > 0)) {
       setLocationError(true);
       setLocationMessage(
         `"${location.name}" contains stock and cannot be deleted. Move the stock first.`,
@@ -469,90 +469,6 @@ export function AdministratorDashboard({
       );
     } finally {
       setDeletingLocationId(null);
-    }
-  }
-
-  async function saveSupplier(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSavingSupplier(true);
-    setSupplierMessage("");
-    setSupplierError(false);
-    const form = event.currentTarget;
-    const data = new FormData(form);
-    const input: SupplierInput = {
-      code: String(data.get("code") ?? "").trim().toUpperCase(),
-      name: String(data.get("name") ?? "").trim(),
-      contactName: String(data.get("contactName") ?? "").trim() || null,
-      email: String(data.get("email") ?? "").trim() || null,
-      phone: String(data.get("phone") ?? "").trim() || null,
-      address: String(data.get("address") ?? "").trim() || null,
-      leadTimeDays: Number(data.get("leadTimeDays")),
-      minimumOrderQuantity: Number(data.get("minimumOrderQuantity")),
-      active: editingSupplier?.active ?? true,
-    };
-    const duplicateCode = suppliers.some(
-      (supplier) =>
-        supplier.code.trim().toUpperCase() === input.code &&
-        supplier.id !== editingSupplier?.id,
-    );
-    if (duplicateCode) {
-      setSupplierError(true);
-      setSupplierMessage(`Supplier code "${input.code}" already exists.`);
-      setSavingSupplier(false);
-      return;
-    }
-    try {
-      if (editingSupplier) await updateSupplier(editingSupplier.id, input);
-      else await createSupplier(input);
-      setSupplierMessage(
-        editingSupplier
-          ? "Supplier updated successfully."
-          : "Supplier added successfully.",
-      );
-      form.reset();
-      setEditingSupplier(null);
-      setShowSupplierForm(false);
-      await load();
-    } catch (saveError) {
-      setSupplierError(true);
-      setSupplierMessage(
-        saveError instanceof Error
-          ? saveError.message
-          : "Supplier could not be saved.",
-      );
-    } finally {
-      setSavingSupplier(false);
-    }
-  }
-
-  async function handleDeleteSupplier(supplier: ApiSupplier) {
-    const linkedProducts = (snapshot?.products ?? []).filter(
-      (product) => product.supplierId === supplier.id,
-    );
-    if (linkedProducts.length > 0) {
-      setSupplierError(true);
-      setSupplierMessage(
-        `"${supplier.name}" is assigned to ${linkedProducts.length} product${linkedProducts.length === 1 ? "" : "s"}. Reassign them before deleting the supplier.`,
-      );
-      return;
-    }
-    if (!window.confirm(`Delete supplier "${supplier.name}" (${supplier.code})?`)) return;
-    setDeletingSupplierId(supplier.id);
-    setSupplierMessage("");
-    setSupplierError(false);
-    try {
-      await deleteSupplier(supplier.id);
-      setSupplierMessage(`Supplier ${supplier.code} deleted.`);
-      await load();
-    } catch (deleteError) {
-      setSupplierError(true);
-      setSupplierMessage(
-        deleteError instanceof Error
-          ? deleteError.message
-          : "Supplier could not be deleted.",
-      );
-    } finally {
-      setDeletingSupplierId(null);
     }
   }
 
@@ -587,13 +503,13 @@ export function AdministratorDashboard({
     ? (snapshot?.balances ?? []).filter(
         (balance) =>
           balance.location.id === selectedLocationDetails.id &&
-          (balance.quantity > 0 || balance.reservedQuantity > 0),
+          balance.quantity > 0,
       )
     : [];
 
   const totalAvailableStock = (snapshot?.balances ?? []).reduce(
     (total, balance) =>
-      total + Math.max(0, balance.quantity - balance.reservedQuantity),
+      total + Math.max(0, balance.quantity),
     0,
   );
 
@@ -602,7 +518,7 @@ export function AdministratorDashboard({
       .filter((balance) => balance.product.id === product.id)
       .reduce(
         (total, balance) =>
-          total + Math.max(0, balance.quantity - balance.reservedQuantity),
+          total + Math.max(0, balance.quantity),
         0,
       );
     return available < product.safetyStock;
@@ -677,7 +593,7 @@ export function AdministratorDashboard({
       PackageCheck,
       "Available stock",
       String(totalAvailableStock),
-      "On-hand after reservations",
+      "Current on-hand quantity",
       "Items",
     ],
     [
@@ -1152,18 +1068,6 @@ export function AdministratorDashboard({
                 />
               </label>
               <label className="text-xs font-extrabold text-[#49617f]">
-                Reserved quantity
-                <input
-                  name="reservedQuantity"
-                  type="number"
-                  min="0"
-                  step="1"
-                  required
-                  defaultValue={adjustingBalance.reservedQuantity}
-                  className="mt-2 h-11 w-full rounded-xl border border-[#dfc589] bg-white px-3 text-sm font-semibold"
-                />
-              </label>
-              <label className="text-xs font-extrabold text-[#49617f]">
                 Adjustment reason
                 <input
                   name="reason"
@@ -1221,11 +1125,7 @@ export function AdministratorDashboard({
                     (t, b) => t + b.quantity,
                     0,
                   );
-                  const reserved = balances.reduce(
-                    (t, b) => t + b.reservedQuantity,
-                    0,
-                  );
-                  const available = Math.max(0, onHand - reserved);
+                  const available = Math.max(0, onHand);
                   const status =
                     available <= 0
                       ? "Out of stock"
@@ -1362,8 +1262,7 @@ export function AdministratorDashboard({
               </div>
               <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 {trackedBalances.map((balance) => {
-                  const available =
-                    balance.quantity - balance.reservedQuantity;
+                  const available = Math.max(0, balance.quantity);
                   return (
                     <article
                       key={balance.id}
@@ -1383,7 +1282,6 @@ export function AdministratorDashboard({
                       </p>
                       <div className="mt-3 flex justify-between text-xs font-semibold text-[#647b99]">
                         <span>On hand {balance.quantity}</span>
-                        <span>Reserved {balance.reservedQuantity}</span>
                       </div>
                     </article>
                   );
@@ -1550,11 +1448,11 @@ export function AdministratorDashboard({
               <div className="overflow-x-auto">
                 <table className="min-w-full text-left">
                   <thead className="bg-white/70 text-[10px] uppercase tracking-[0.12em] text-[#8294ac]">
-                    <tr>{["SKU", "Item", "Unit", "On hand", "Reserved", "Available", "Safety stock", "Status"].map((heading) => <th key={heading} className="whitespace-nowrap px-5 py-3 font-extrabold">{heading}</th>)}</tr>
+                    <tr>{["SKU", "Item", "Unit", "On hand", "Available", "Safety stock", "Status"].map((heading) => <th key={heading} className="whitespace-nowrap px-5 py-3 font-extrabold">{heading}</th>)}</tr>
                   </thead>
                   <tbody className="divide-y divide-[#e4ebf4] text-xs">
                     {selectedLocationBalances.map((balance) => {
-                      const available = Math.max(0, balance.quantity - balance.reservedQuantity);
+                      const available = Math.max(0, balance.quantity);
                       const lowStock = available < balance.product.safetyStock;
                       return (
                         <tr key={balance.id} className="bg-white/45">
@@ -1562,7 +1460,6 @@ export function AdministratorDashboard({
                           <td className="whitespace-nowrap px-5 py-4 font-extrabold text-[#17345f]">{balance.product.name}</td>
                           <td className="whitespace-nowrap px-5 py-4 text-[#6c829f]">{balance.product.unit}</td>
                           <td className="whitespace-nowrap px-5 py-4 font-bold text-[#29466f]">{balance.quantity}</td>
-                          <td className="whitespace-nowrap px-5 py-4 font-bold text-[#a8670d]">{balance.reservedQuantity}</td>
                           <td className="whitespace-nowrap px-5 py-4 font-extrabold text-[#16865b]">{available}</td>
                           <td className="whitespace-nowrap px-5 py-4 font-bold text-[#496482]">{balance.product.safetyStock}</td>
                           <td className="whitespace-nowrap px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold ${lowStock ? "bg-[#fff4df] text-[#a8670d]" : "bg-[#eaf8f1] text-[#16865b]"}`}>{lowStock ? "Low stock" : "Available"}</span></td>
@@ -1586,10 +1483,10 @@ export function AdministratorDashboard({
               const locationBalances = (snapshot?.balances ?? []).filter(
                 (balance) =>
                   balance.location.id === location.id &&
-                  (balance.quantity > 0 || balance.reservedQuantity > 0),
+                  balance.quantity > 0,
               );
               const available = locationBalances.reduce(
-                (total, balance) => total + Math.max(0, balance.quantity - balance.reservedQuantity),
+                (total, balance) => total + Math.max(0, balance.quantity),
                 0,
               );
               return (
@@ -1639,12 +1536,12 @@ export function AdministratorDashboard({
                     </div>
                     <div className="mt-2 space-y-2">
                       {locationBalances.slice(0, 3).map((balance) => {
-                        const itemAvailable = Math.max(0, balance.quantity - balance.reservedQuantity);
+                        const itemAvailable = Math.max(0, balance.quantity);
                         return (
                           <div key={balance.id} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2">
                             <div className="min-w-0">
                               <p className="truncate text-xs font-extrabold text-[#17345f]">{balance.product.name}</p>
-                              <p className="text-[9px] font-bold text-[#8294ac]">{balance.product.sku} · On hand {balance.quantity} · Reserved {balance.reservedQuantity}</p>
+                              <p className="text-[9px] font-bold text-[#8294ac]">{balance.product.sku} · On hand {balance.quantity}</p>
                             </div>
                             <div className="shrink-0 text-right">
                               <p className="text-sm font-black text-[#155eef]">{itemAvailable} {balance.product.unit}</p>
@@ -1688,182 +1585,6 @@ export function AdministratorDashboard({
                 <Warehouse size={28} className="mx-auto text-[#9aabc1]" />
                 <p className="mt-3 text-sm font-extrabold text-[#496482]">No locations have been added</p>
                 <p className="mt-1 text-xs text-[#8295af]">Add a warehouse location before receiving or moving stock.</p>
-              </div>
-            )}
-          </div>
-        </section>
-      )}
-
-      {false && managerMode && page === "Suppliers" && (
-        <section
-          id="admin-suppliers"
-          className="card-3d scroll-mt-28 rounded-[24px] bg-white"
-        >
-          <div className="flex flex-col gap-3 border-b border-[#e8eef6] p-6 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-[11px] font-extrabold uppercase tracking-[0.15em] text-[#155eef]">
-                Purchasing master
-              </p>
-              <h3 className="mt-1 text-xl font-extrabold text-[#102a56]">
-                Suppliers
-              </h3>
-              <p className="mt-1 text-sm text-[#7489a6]">
-                Review supplier contacts, lead times and linked products.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void load()}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-[#c9d8ee] bg-white px-4 text-sm font-extrabold text-[#155eef]"
-              >
-                <RefreshCcw size={16} className={loading ? "animate-spin" : ""} />
-                Refresh
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingSupplier(null);
-                  setShowSupplierForm(true);
-                  setSupplierMessage("");
-                  setSupplierError(false);
-                }}
-                className="h-11 rounded-xl bg-[#155eef] px-4 text-sm font-extrabold text-white"
-              >
-                + Add supplier
-              </button>
-            </div>
-          </div>
-
-          {supplierMessage && (
-            <div role="status" className={`mx-6 mt-5 rounded-xl border px-4 py-3 text-sm font-semibold ${supplierError ? "border-[#ffd1d1] bg-[#fff2f2] text-[#a73737]" : "border-[#cfe0f8] bg-[#eef6ff] text-[#244f86]"}`}>
-              {supplierMessage}
-            </div>
-          )}
-
-          {showSupplierForm && (
-            <form
-              key={editingSupplier?.id ?? "new-supplier"}
-              onSubmit={saveSupplier}
-              className="mx-6 mt-5 grid gap-4 rounded-2xl border border-[#cbdcf5] bg-[#f7faff] p-5 md:grid-cols-2 xl:grid-cols-4"
-            >
-              <div className="md:col-span-2 xl:col-span-4">
-                <p className="font-extrabold text-[#17345f]">{editingSupplier ? "Edit supplier" : "Add supplier"}</p>
-                <p className="mt-1 text-xs text-[#7b8fa9]">Enter the purchasing contact and ordering rules.</p>
-              </div>
-              <label className="text-xs font-extrabold text-[#49617f]">
-                Supplier code
-                <input name="code" required maxLength={30} defaultValue={editingSupplier?.code ?? ""} placeholder="SUP-001" className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3 text-sm font-semibold" />
-              </label>
-              <label className="text-xs font-extrabold text-[#49617f]">
-                Supplier name
-                <input name="name" required maxLength={120} defaultValue={editingSupplier?.name ?? ""} placeholder="Metro Supply" className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3 text-sm font-semibold" />
-              </label>
-              <label className="text-xs font-extrabold text-[#49617f]">
-                Contact person
-                <input name="contactName" maxLength={120} defaultValue={editingSupplier?.contactName ?? ""} placeholder="Amit Shah" className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3 text-sm font-semibold" />
-              </label>
-              <label className="text-xs font-extrabold text-[#49617f]">
-                Email
-                <input name="email" type="email" maxLength={160} defaultValue={editingSupplier?.email ?? ""} placeholder="orders@example.com" className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3 text-sm font-semibold" />
-              </label>
-              <label className="text-xs font-extrabold text-[#49617f]">
-                Phone
-                <input name="phone" maxLength={40} defaultValue={editingSupplier?.phone ?? ""} placeholder="9876543210" className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3 text-sm font-semibold" />
-              </label>
-              <label className="text-xs font-extrabold text-[#49617f]">
-                Lead time (days)
-                <input name="leadTimeDays" type="number" required min="0" defaultValue={editingSupplier?.leadTimeDays ?? 3} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3 text-sm font-semibold" />
-              </label>
-              <label className="text-xs font-extrabold text-[#49617f]">
-                Minimum order quantity
-                <input name="minimumOrderQuantity" type="number" required min="1" defaultValue={editingSupplier?.minimumOrderQuantity ?? 1} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3 text-sm font-semibold" />
-              </label>
-              <label className="text-xs font-extrabold text-[#49617f] md:col-span-2 xl:col-span-1">
-                Address
-                <input name="address" maxLength={240} defaultValue={editingSupplier?.address ?? ""} placeholder="Ahmedabad" className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3 text-sm font-semibold" />
-              </label>
-              <div className="flex flex-wrap gap-2 md:col-span-2 xl:col-span-4">
-                <button disabled={savingSupplier} className="h-11 rounded-xl bg-[#155eef] px-5 text-sm font-extrabold text-white disabled:opacity-60">
-                  {savingSupplier ? "Saving..." : editingSupplier ? "Save changes" : "Add supplier"}
-                </button>
-                <button type="button" onClick={() => { setShowSupplierForm(false); setEditingSupplier(null); }} className="h-11 rounded-xl border border-[#d5e1f0] bg-white px-4 text-sm font-bold text-[#617796]">
-                  Cancel
-                </button>
-              </div>
-            </form>
-          )}
-
-          <div className="overflow-x-auto p-6">
-            {loading ? (
-              <div className="rounded-2xl border border-dashed border-[#cbd8e8] px-5 py-12 text-center text-sm font-semibold text-[#7b8fa9]">
-                Loading suppliers...
-              </div>
-            ) : suppliers.length ? (
-              <table className="min-w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-[#e5ebf4] text-[10px] uppercase tracking-[0.12em] text-[#8295af]">
-                    {['Code', 'Supplier', 'Contact', 'Lead time', 'Minimum order', 'Products', 'Status', 'Actions'].map((heading) => (
-                      <th key={heading} className="whitespace-nowrap px-4 py-3.5 font-extrabold">{heading}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {suppliers.map((supplier) => {
-                    const linkedProducts = (snapshot?.products ?? []).filter(
-                      (product) => product.supplierId === supplier.id,
-                    ).length;
-                    return (
-                      <tr key={supplier.id} className="border-b border-[#eef2f7] last:border-0">
-                        <td className="px-4 py-4 font-mono text-xs font-extrabold text-[#155eef]">{supplier.code}</td>
-                        <td className="px-4 py-4 font-extrabold text-[#17345f]">{supplier.name}</td>
-                        <td className="px-4 py-4 text-[#647b99]">
-                          <p className="font-semibold text-[#496482]">{supplier.contactName || 'Not provided'}</p>
-                          <p className="mt-1 text-xs">{supplier.email || supplier.phone || 'No contact details'}</p>
-                        </td>
-                        <td className="px-4 py-4 font-bold text-[#496482]">{supplier.leadTimeDays} days</td>
-                        <td className="px-4 py-4 font-bold text-[#496482]">{supplier.minimumOrderQuantity}</td>
-                        <td className="px-4 py-4 font-extrabold text-[#17345f]">{linkedProducts}</td>
-                        <td className="px-4 py-4">
-                          <span className={`rounded-full px-3 py-1 text-[10px] font-extrabold ${supplier.active ? "bg-[#eaf8f1] text-[#16865b]" : "bg-[#eef2f7] text-[#7186a3]"}`}>
-                            {supplier.active ? 'Active' : 'Inactive'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-4">
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingSupplier(supplier);
-                                setShowSupplierForm(true);
-                                setSupplierMessage("");
-                                setSupplierError(false);
-                                window.scrollTo({ top: 0, behavior: "smooth" });
-                              }}
-                              className="rounded-lg border border-[#b9d0f8] px-3 py-2 text-xs font-extrabold text-[#155eef]"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              disabled={deletingSupplierId === supplier.id}
-                              onClick={() => void handleDeleteSupplier(supplier)}
-                              className="rounded-lg border border-[#efb5b5] px-3 py-2 text-xs font-extrabold text-[#b83f3f] disabled:opacity-50"
-                            >
-                              {deletingSupplierId === supplier.id ? "Deleting..." : "Delete"}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            ) : (
-              <div className="rounded-2xl border border-dashed border-[#cbd8e8] px-5 py-12 text-center">
-                <Boxes size={28} className="mx-auto text-[#9aabc1]" />
-                <p className="mt-3 text-sm font-extrabold text-[#496482]">No suppliers have been added</p>
-                <p className="mt-1 text-xs text-[#8295af]">Add supplier records before assigning products for purchasing.</p>
               </div>
             )}
           </div>
@@ -2316,19 +2037,6 @@ export function AdministratorDashboard({
                         <p className="font-extrabold text-[#17345f]">Locations</p>
                         <p className="text-[10px] text-[#8295af]">
                           {snapshot?.locations.length ?? 0} active
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="rounded-2xl border border-[#dce6f3] bg-white p-4">
-                    <div className="flex items-center gap-3">
-                      <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#eaf2ff] text-[#155eef]">
-                        <Truck size={19} />
-                      </span>
-                      <div>
-                        <p className="font-extrabold text-[#17345f]">Suppliers</p>
-                        <p className="text-[10px] text-[#8295af]">
-                          {suppliers.filter((s) => s.active).length} active
                         </p>
                       </div>
                     </div>

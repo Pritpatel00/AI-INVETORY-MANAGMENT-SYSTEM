@@ -26,14 +26,12 @@ const workerActor: AuthenticatedUser = {
 
 function createPrismaMock(overrides: {
   locations?: number;
-  suppliers?: number;
   products?: number;
   assignments?: number;
   stocked?: number;
   assignedWorkers?: number;
 } = {}) {
   const locationCount = jest.fn(async () => overrides.locations ?? 0);
-  const supplierCount = jest.fn(async () => overrides.suppliers ?? 0);
   const productCount = jest.fn(async () => overrides.products ?? 0);
   const assignmentCount = jest.fn(async () => overrides.assignments ?? 0);
   const stockedCount = jest.fn(async () => overrides.stocked ?? 0);
@@ -81,7 +79,6 @@ function createPrismaMock(overrides: {
 
   const prisma = {
     location: { count: locationCount, findMany: jest.fn(async () => []), findFirst: locationFindFirst },
-    supplier: { count: supplierCount, findMany: jest.fn(async () => []) },
     product: { count: productCount, findMany: jest.fn(async () => []), findFirst: productFindFirst },
     inventoryBalance: {
       count: balanceCount,
@@ -108,7 +105,6 @@ function createPrismaMock(overrides: {
   return {
     prisma,
     locationCount,
-    supplierCount,
     productCount,
     productFindFirst,
     assignmentCount,
@@ -134,7 +130,6 @@ describe("SetupService", () => {
 
       expect(status).toEqual({
         locationCreated: false,
-        supplierCreated: false,
         productCreated: false,
         productAssigned: false,
         openingStockEntered: false,
@@ -144,23 +139,21 @@ describe("SetupService", () => {
     });
 
     test("partially completed setup reports partial progress", async () => {
-      const { prisma } = createPrismaMock({ locations: 3, suppliers: 1 });
+      const { prisma } = createPrismaMock({ locations: 3, products: 1 });
       const service = new SetupService(prisma);
       const status = await service.getStatus();
 
       expect(status.locationCreated).toBe(true);
-      expect(status.supplierCreated).toBe(true);
-      expect(status.productCreated).toBe(false);
+      expect(status.productCreated).toBe(true);
       expect(status.productAssigned).toBe(false);
       expect(status.openingStockEntered).toBe(false);
       expect(status.workerAssigned).toBe(false);
-      expect(status.completionPercent).toBe(33);
+      expect(status.completionPercent).toBe(40);
     });
 
     test("completed setup reports 100 percent", async () => {
       const { prisma } = createPrismaMock({
         locations: 4,
-        suppliers: 2,
         products: 10,
         assignments: 8,
         stocked: 8,
@@ -171,7 +164,6 @@ describe("SetupService", () => {
 
       expect(status).toEqual({
         locationCreated: true,
-        supplierCreated: true,
         productCreated: true,
         productAssigned: true,
         openingStockEntered: true,
@@ -197,7 +189,6 @@ describe("SetupService", () => {
       const summary = await service.getSummary();
 
       expect(summary).toHaveProperty("locations");
-      expect(summary).toHaveProperty("suppliers");
       expect(summary).toHaveProperty("products");
       expect(summary).toHaveProperty("balances");
       expect(summary).toHaveProperty("workers");

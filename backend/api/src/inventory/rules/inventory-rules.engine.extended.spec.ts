@@ -561,7 +561,7 @@ describe("Purchase Items — evaluateReorder", () => {
     expect(decision.suggestedQuantity).toBeGreaterThan(0);
   });
 
-  test("no supplier email fields exist in the reorder decision", () => {
+  test("no external purchasing fields exist in the reorder decision", () => {
     const decision = rules.evaluateReorder(40, 0, 60, 25);
     const keys = Object.keys(decision);
     expect(keys).toEqual(expect.not.arrayContaining(["emailStatus", "emailQueuedAt", "emailSentAt", "emailAttempts", "emailError"]));

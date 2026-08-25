@@ -22,7 +22,10 @@ export class TasksController {
   cycleCountPlan(@Param("id", new ParseUUIDPipe()) id: string) { return this.tasks.getCycleCountPlan(id); }
   @Post() @Roles("manager", "administrator") create(@Body() input: CreateTaskDto) { return this.tasks.create(input); }
   @Post("cycle-count-plans") @Roles("manager", "administrator") createCycleCountPlan(@Body() input: CreateCycleCountPlanDto) { return this.tasks.createCycleCountPlan(input); }
-  @Delete(":id") @Roles("manager", "administrator") remove(@Param("id", new ParseUUIDPipe()) id: string) { return this.tasks.removeOpen(id); }
+  @Delete(":id") @Roles("manager", "administrator")
+  remove(@Param("id", new ParseUUIDPipe()) id: string, @Req() request: AuthenticatedRequest) {
+    return this.tasks.cancel(id, request.authUser!);
+  }
   @Post(":id/start") start(@Param("id", new ParseUUIDPipe()) id: string, @Req() request: AuthenticatedRequest) { return this.tasks.changeStatus(id, TaskStatus.IN_PROGRESS, request.authUser!); }
   @Post(":id/complete") complete(@Param("id", new ParseUUIDPipe()) id: string, @Req() request: AuthenticatedRequest) { return this.tasks.changeStatus(id, TaskStatus.COMPLETED, request.authUser!); }
   @Post(":id/assign") @Roles("manager", "administrator")

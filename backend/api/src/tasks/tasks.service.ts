@@ -1,10 +1,19 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { NotificationType, Prisma, TaskStatus, TaskType, TaskPriority, UserRole } from "@prisma/client";
+import {
+  DiscrepancyAuditAction,
+  DiscrepancyStatus,
+  NotificationType,
+  Prisma,
+  TaskStatus,
+  TaskType,
+  TaskPriority,
+  TransactionStatus,
+  UserRole,
+} from "@prisma/client";
 import { createHash } from "node:crypto";
 import type { AuthenticatedUser } from "../auth/auth-user";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
-import { ReservationsService } from "../reservations/reservations.service";
 import { CreateTaskDto } from "./create-task.dto";
 import { CreateCycleCountPlanDto } from "./create-cycle-count-plan.dto";
 
@@ -12,7 +21,6 @@ import { CreateCycleCountPlanDto } from "./create-cycle-count-plan.dto";
 export class TasksService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly reservations: ReservationsService,
     private readonly notifications: NotificationsService,
   ) {}
   async list(actor: AuthenticatedUser) {
@@ -20,15 +28,11 @@ export class TasksService {
     const manager = actor.roles.some((r) => r === "manager" || r === "administrator");
     return this.prisma.inventoryTask.findMany({
       // Workers see their own tasks plus the shared pool of unassigned open
-      // tasks (for example expected-receiving tasks created when a purchase
-      // order is approved). Any available executive can claim one by starting
-      // it. Unassigned reservation shipments are excluded: they wait for a
-      // manager to assign them from the reservation card and must not appear
-      // in a worker's queue as claimable work.
+      // tasks. Any available executive can claim one by starting it.
       where: manager ? undefined : {
         OR: [
-          { assignedToId: user.id },
-          { assignedToId: null, status: TaskStatus.OPEN, NOT: { type: TaskType.SHIP } },
+          { assignedToId: user.id, status: { in: [TaskStatus.OPEN, TaskStatus.IN_PROGRESS] } },
+          { assignedToId: null, status: TaskStatus.OPEN },
         ],
       },
       include: {
@@ -55,23 +59,13 @@ export class TasksService {
             managerNotes: true,
           },
         },
-        // Reservation shipment tasks expose the order reference so the queue
-        // can show which reservation is being shipped.
-        reservation: {
-          select: {
-            id: true,
-            reservationNumber: true,
-            request: { select: { referenceNumber: true, requestedFor: true } },
-          },
-        },
       },
       orderBy: [{ status: "asc" }, { priority: "desc" }, { dueAt: "asc" }],
     });
   }
   /**
    * Active Warehouse Executives with their current actionable open-task count.
-   * The manager UI uses the count to pick a worker and the prepare-shipment
-   * modal shows it next to each candidate.
+   * The manager UI uses the count to pick a worker.
    */
   async listAssignees() {
     const workers = await this.prisma.user.findMany({
@@ -123,8 +117,7 @@ export class TasksService {
           },
         },
       });
-      const available =
-        (balance?.quantity ?? 0) - (balance?.reservedQuantity ?? 0);
+      const available = balance?.quantity ?? 0;
       if (input.quantity > available) {
         throw new ConflictException(
           `Only ${Math.max(0, available)} units are available at ${sourceLocation.name}.`,
@@ -548,29 +541,77 @@ export class TasksService {
       status,
     };
   }
-  async removeOpen(id: string) {
-    const task = await this.prisma.inventoryTask.findUnique({ where: { id } });
-    if (!task) throw new NotFoundException("Task not found.");
-    if (task.status !== TaskStatus.OPEN) {
-      throw new ConflictException("Only open tasks that have not started can be deleted.");
-    }
-    return this.prisma.inventoryTask.update({
-      where: { id },
-      data: { status: TaskStatus.CANCELLED },
+  async cancel(id: string, actor: AuthenticatedUser) {
+    const manager = actor.roles.some((role) => role === "manager" || role === "administrator");
+    if (!manager) throw new ForbiddenException("Only managers and administrators can cancel tasks.");
+
+    const reason = "Task cancelled by manager because it was stale or no longer required.";
+    const managerUser = await this.resolveUser(actor);
+
+    return this.prisma.$transaction(async (database) => {
+      const task = await database.inventoryTask.findUnique({
+        where: { id },
+        include: { sourceTransaction: { include: { discrepancy: true } } },
+      });
+      if (!task) throw new NotFoundException("Task not found.");
+      if (task.status === TaskStatus.COMPLETED) {
+        throw new ConflictException("Completed tasks cannot be cancelled.");
+      }
+      if (task.status === TaskStatus.CANCELLED) {
+        return task;
+      }
+
+      const linkedTransaction = task.sourceTransaction ?? await database.inventoryTransaction.findFirst({
+        where: {
+          OR: [{ taskId: id }, { recountTaskId: id }],
+          status: { in: [TransactionStatus.PENDING, TransactionStatus.RECOUNT_REQUESTED] },
+        },
+        include: { discrepancy: true },
+      });
+
+      if (linkedTransaction) {
+        await database.inventoryTransaction.update({
+          where: { id: linkedTransaction.id },
+          data: { status: TransactionStatus.CANCELLED, reviewNotes: reason, reviewReasons: reason },
+        });
+
+        const discrepancy = linkedTransaction.discrepancy;
+        if (discrepancy) {
+          await database.discrepancy.update({
+            where: { id: discrepancy.id },
+            data: { status: DiscrepancyStatus.CLOSED, assignedManagerId: managerUser.id, managerNotes: reason },
+          });
+          await database.discrepancyAuditEvent.create({
+            data: {
+              discrepancyId: discrepancy.id,
+              caseNumber: discrepancy.caseNumber,
+              action: DiscrepancyAuditAction.CASE_CLOSED,
+              previousStatus: discrepancy.status,
+              newStatus: DiscrepancyStatus.CLOSED,
+              expectedQuantity: discrepancy.expectedQuantity,
+              countedQuantity: discrepancy.countedQuantity,
+              differenceQuantity: discrepancy.differenceQuantity,
+              actorManagerId: managerUser.id,
+              reason,
+              transactionId: linkedTransaction.id,
+            },
+          });
+        }
+      }
+
+      return database.inventoryTask.update({
+        where: { id },
+        data: { status: TaskStatus.CANCELLED },
+      });
     });
   }
+
   async changeStatus(id: string, status: TaskStatus, actor: AuthenticatedUser) {
     const user = await this.resolveUser(actor);
     const task = await this.prisma.inventoryTask.findUnique({ where: { id } });
     if (!task) throw new NotFoundException("Task not found.");
     const manager = actor.roles.some((r) => r === "manager" || r === "administrator");
-    const shipmentTask = task.type === TaskType.SHIP && task.reservationId !== null;
     const unassigned = task.assignedToId === null;
-    if (shipmentTask && unassigned && !manager) {
-      throw new ForbiddenException(
-        "This shipment task is not assigned yet. A manager must assign it before it can be started or completed.",
-      );
-    }
     if (!manager && task.assignedToId !== user.id && !unassigned) {
       throw new ForbiddenException("This task is assigned to another user.");
     }
@@ -581,11 +622,20 @@ export class TasksService {
       throw new ConflictException("Cancelled tasks cannot be changed.");
     }
 
-    // A reservation shipment is posted atomically with the task completion:
-    // the Ship transaction, the on-hand/reserved reduction and the reservation
-    // status change all commit together.
-    if (shipmentTask && status === TaskStatus.COMPLETED) {
-      return this.reservations.completeShipmentTask(id, actor);
+    // Shipping work must be completed through the normal Ship Stock workflow.
+    // That workflow posts the inventory transaction and completes the task in
+    // one database transaction, preventing a task from being marked complete
+    // without reducing stock.
+    if (task.type === TaskType.SHIP && status === TaskStatus.COMPLETED) {
+      const postedMovement = await this.prisma.inventoryTransaction.findFirst({
+        where: { taskId: task.id, status: TransactionStatus.POSTED },
+        select: { id: true },
+      });
+      if (!postedMovement) {
+        throw new ConflictException(
+          "Complete this task through the Ship Stock voice workflow so inventory is updated safely.",
+        );
+      }
     }
 
     // A worker claims an unassigned task (for example an expected-receiving
@@ -626,18 +676,12 @@ export class TasksService {
 
   /**
    * Manager-only reassignment. Validates that the target is an active
-   * Warehouse Executive (never a Manager or Administrator), records the
-   * reassignment in the reservation audit when the task belongs to a
-   * reservation, and notifies the newly assigned worker.
+   * Warehouse Executive (never a Manager or Administrator) and notifies the
+   * newly assigned worker.
    */
   async reassign(id: string, workerId: string, actor: AuthenticatedUser) {
     const user = await this.resolveUser(actor);
-    const task = await this.prisma.inventoryTask.findUnique({
-      where: { id },
-      include: {
-        reservation: { select: { id: true, stockRequestId: true } },
-      },
-    });
+    const task = await this.prisma.inventoryTask.findUnique({ where: { id } });
     if (!task) throw new NotFoundException("Task not found.");
     if (task.status === TaskStatus.COMPLETED || task.status === TaskStatus.CANCELLED) {
       throw new ConflictException("Completed or cancelled tasks cannot be reassigned.");
@@ -658,22 +702,11 @@ export class TasksService {
         ...(task.status === TaskStatus.IN_PROGRESS ? {} : { startedAt: null }),
       },
     });
-    if (task.reservation) {
-      await this.prisma.reservationAuditEvent.create({
-        data: {
-          stockRequestId: task.reservation.stockRequestId,
-          reservationId: task.reservation.id,
-          action: "SHIPMENT_REASSIGNED",
-          details: `${task.shipmentReference ?? "Shipment"} reassigned to ${worker.displayName}.`,
-          actorId: user.id,
-        },
-      });
-    }
     await this.notifications.createForUser(this.prisma, {
       userId: worker.id,
-      type: NotificationType.SHIPMENT_TASK_ASSIGNED,
-      title: "Shipment task assigned to you",
-      message: `${task.title}${task.shipmentReference ? ` (${task.shipmentReference})` : ""}.`,
+      type: NotificationType.TASK_ASSIGNED,
+      title: "Inventory task assigned to you",
+      message: `${task.title}.`,
       linkType: "task",
       linkId: task.id,
     });

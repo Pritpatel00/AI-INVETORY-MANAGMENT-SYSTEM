@@ -1,5 +1,13 @@
-import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
-import { TaskPriority, TaskStatus, TaskType, UserRole } from "@prisma/client";
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import {
+  DiscrepancyAuditAction,
+  DiscrepancyStatus,
+  TaskPriority,
+  TaskStatus,
+  TaskType,
+  TransactionStatus,
+  UserRole,
+} from "@prisma/client";
 
 import { NotificationsService } from "../notifications/notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -13,7 +21,7 @@ const managerActor = {
 };
 
 function createService(prisma: PrismaService) {
-  return new TasksService(prisma, undefined as never, undefined as never);
+  return new TasksService(prisma, undefined as never);
 }
 
 function createPrismaMock(available = 90) {
@@ -22,8 +30,7 @@ function createPrismaMock(available = 90) {
     ...data,
   }));
   const inventoryBalanceFindUnique = jest.fn(async () => ({
-    quantity: available + 10,
-    reservedQuantity: 10,
+    quantity: available,
   }));
   const locations = new Map([
     ["loc-source", { id: "loc-source", name: "Storage", active: true }],
@@ -79,6 +86,84 @@ const transferInput = {
   destinationLocationId: "loc-destination",
 };
 
+describe("TasksService cancellation", () => {
+  const reason = "Task cancelled by manager because it was stale or no longer required.";
+
+  it("cancels an in-progress task and linked pending transaction without changing stock", async () => {
+    const task = {
+      id: "task-recount-light",
+      status: TaskStatus.IN_PROGRESS,
+      title: "Recount Light",
+      sourceTransaction: {
+        id: "tx-recount-light",
+        status: TransactionStatus.RECOUNT_REQUESTED,
+        discrepancy: {
+          id: "disc-light",
+          caseNumber: "DISC-001",
+          status: DiscrepancyStatus.OPEN,
+          expectedQuantity: 100,
+          countedQuantity: 50,
+          differenceQuantity: -50,
+        },
+      },
+    };
+    const inventoryTaskUpdate = jest.fn(async () => ({ ...task, status: TaskStatus.CANCELLED }));
+    const inventoryTransactionUpdate = jest.fn();
+    const discrepancyUpdate = jest.fn();
+    const discrepancyAuditCreate = jest.fn();
+    const inventoryBalanceUpdate = jest.fn();
+    const database: any = {
+      user: {
+        findUnique: jest.fn(async () => ({ id: "manager-1", role: UserRole.MANAGER, active: true })),
+        create: jest.fn(),
+      },
+      inventoryTask: {
+        findUnique: jest.fn(async () => task),
+        update: inventoryTaskUpdate,
+      },
+      inventoryTransaction: {
+        findFirst: jest.fn(),
+        update: inventoryTransactionUpdate,
+      },
+      discrepancy: { update: discrepancyUpdate },
+      discrepancyAuditEvent: { create: discrepancyAuditCreate },
+      inventoryBalance: { update: inventoryBalanceUpdate },
+      $transaction: jest.fn(async (callback: (tx: any) => unknown): Promise<unknown> => callback(database)),
+    };
+
+    const result = await createService(database as unknown as PrismaService).cancel("task-recount-light", managerActor);
+
+    expect(result.status).toBe(TaskStatus.CANCELLED);
+    expect(inventoryTransactionUpdate).toHaveBeenCalledWith({
+      where: { id: "tx-recount-light" },
+      data: expect.objectContaining({ status: TransactionStatus.CANCELLED, reviewReasons: reason }),
+    });
+    expect(discrepancyUpdate).toHaveBeenCalledWith({
+      where: { id: "disc-light" },
+      data: expect.objectContaining({ status: DiscrepancyStatus.CLOSED, managerNotes: reason }),
+    });
+    expect(discrepancyAuditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: DiscrepancyAuditAction.CASE_CLOSED,
+        reason,
+        transactionId: "tx-recount-light",
+      }),
+    });
+    expect(inventoryBalanceUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects cancellation by a warehouse worker", async () => {
+    const database = {
+      user: { findUnique: jest.fn(), create: jest.fn() },
+      $transaction: jest.fn(),
+    };
+    const worker = { ...managerActor, roles: ["worker"] };
+
+    await expect(createService(database as unknown as PrismaService).cancel("task-1", worker)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(database.$transaction).not.toHaveBeenCalled();
+  });
+});
+
 describe("TasksService transfer assignments", () => {
   it("creates an assignment without changing inventory", async () => {
     const mock = createPrismaMock();
@@ -132,15 +217,13 @@ describe("TasksService transfer assignments", () => {
   });
 });
 
-describe("TasksService shipment reassignment", () => {
+describe("TasksService reassignment", () => {
   function reassignmentService(worker: { id: string; displayName: string } | null, taskOverrides: Record<string, unknown> = {}) {
     const inventoryTaskUpdate = jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({
       id: "task-1",
       status: TaskStatus.OPEN,
-      shipmentReference: "SHIP-001",
       ...data,
     }));
-    const auditCreate = jest.fn();
     const notificationCreate = jest.fn();
     const prisma = {
       user: {
@@ -152,22 +235,19 @@ describe("TasksService shipment reassignment", () => {
           id: "task-1",
           status: TaskStatus.OPEN,
           title: "Ship Cable",
-          shipmentReference: "SHIP-001",
-          reservation: { id: "reservation-1", stockRequestId: "request-1" },
           ...taskOverrides,
         })),
         update: inventoryTaskUpdate,
         findUniqueOrThrow: jest.fn(async () => ({ id: "task-1", status: TaskStatus.OPEN })),
       },
-      reservationAuditEvent: { create: auditCreate },
     } as unknown as PrismaService;
     const notifications = { createForUser: notificationCreate } as unknown as NotificationsService;
-    const service = new TasksService(prisma, undefined as never, notifications);
-    return { service, inventoryTaskUpdate, auditCreate, notificationCreate };
+    const service = new TasksService(prisma, notifications);
+    return { service, inventoryTaskUpdate, notificationCreate };
   }
 
-  it("reassigns an open shipment task to another active executive and notifies them", async () => {
-    const { service, inventoryTaskUpdate, auditCreate, notificationCreate } = reassignmentService({
+  it("reassigns an open task to another active executive and notifies them", async () => {
+    const { service, inventoryTaskUpdate, notificationCreate } = reassignmentService({
       id: "worker-2",
       displayName: "Worker Two",
     });
@@ -180,14 +260,9 @@ describe("TasksService shipment reassignment", () => {
         data: expect.objectContaining({ assignedToId: "worker-2" }),
       }),
     );
-    expect(auditCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ action: "SHIPMENT_REASSIGNED" }),
-      }),
-    );
     expect(notificationCreate).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ userId: "worker-2", type: "SHIPMENT_TASK_ASSIGNED" }),
+      expect.objectContaining({ userId: "worker-2", type: "TASK_ASSIGNED" }),
     );
     expect(result.idempotent).toBe(false);
   });
@@ -202,7 +277,7 @@ describe("TasksService shipment reassignment", () => {
   it("is idempotent when the task is already assigned to the same worker", async () => {
     const { service, inventoryTaskUpdate, notificationCreate } = reassignmentService(
       { id: "worker-2", displayName: "Worker Two" },
-      { assignedToId: "worker-2", reservation: null },
+      { assignedToId: "worker-2" },
     );
 
     const result = await service.reassign("task-1", "worker-2", managerActor);
@@ -286,7 +361,7 @@ function planPrismaMock(overrides: {
     ),
   } as unknown as PrismaService;
   const notifications = { createForUser: jest.fn(async () => ({})) } as unknown as NotificationsService;
-  const service = new TasksService(prisma, undefined as never, notifications);
+  const service = new TasksService(prisma, notifications);
   return { prisma, service, createMany, createPlan, notificationCreate, notifications };
 }
 

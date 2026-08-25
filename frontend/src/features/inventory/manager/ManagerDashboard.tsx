@@ -8,7 +8,6 @@ import { MetricCard } from "../shared/MetricCard";
 import { WarehouseHero } from "../shared/WarehouseHero";
 import { AdministratorDashboard } from "../administrator/AdministratorDashboard";
 import { DiscrepanciesPage } from "./DiscrepanciesPage";
-import { StockReservationsPage } from "./StockReservationsPage";
 import { TransactionEvidence } from "./TransactionEvidence";
 
 const currentCycleCountPeriod = new Date().toISOString().slice(0, 7);
@@ -34,6 +33,7 @@ export function ManagerDashboard({
 
   const [reviewingId, setReviewingId] = useState<string | null>(null);
   const [managerMessage, setManagerMessage] = useState("");
+  const [damageAdjustmentReasons, setDamageAdjustmentReasons] = useState<Record<string, string>>({});
   const [reorderActionId, setReorderActionId] = useState<string | null>(null);
   const [reorderMessage, setReorderMessage] = useState("");
   const [purchaseQuery, setPurchaseQuery] = useState("");
@@ -55,6 +55,7 @@ export function ManagerDashboard({
   const [plannedTaskType, setPlannedTaskType] = useState("RECEIVE");
   const [plannedProductId, setPlannedProductId] = useState("");
   const [plannedLocationId, setPlannedLocationId] = useState("");
+  const [plannedCycleLocationIds, setPlannedCycleLocationIds] = useState<string[]>([]);
   const [plannedTransferQuantity, setPlannedTransferQuantity] = useState("");
   const [plannedTransferSourceId, setPlannedTransferSourceId] = useState("");
   const [plannedTransferDestinationId, setPlannedTransferDestinationId] = useState("");
@@ -70,6 +71,10 @@ export function ManagerDashboard({
   const [openPlanDetail, setOpenPlanDetail] = useState<ApiCycleCountPlanDetail | null>(null);
   const [loadingPlanDetail, setLoadingPlanDetail] = useState(false);
   const [healthMounted, setHealthMounted] = useState(false);
+  const [snapshotLoading, setSnapshotLoading] = useState(true);
+  const [snapshotError, setSnapshotError] = useState("");
+  const [auxiliaryWarning, setAuxiliaryWarning] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setHealthMounted(true));
@@ -90,40 +95,57 @@ export function ManagerDashboard({
     setReorderDrafts(drafts);
   }
 
+  function retryLiveData() {
+    setSnapshotLoading(true);
+    setSnapshotError("");
+    setAuxiliaryWarning("");
+    setReloadKey((value) => value + 1);
+  }
+
   useEffect(() => {
     let active = true;
-    Promise.all([fetchInventorySnapshot(), refreshReorderDrafts(), fetchInventoryTasks(), fetchTaskAssignees(), fetchCycleCountPlans()])
-      .then(([inventory, drafts, tasks, assignees, plans]) => {
-        if (!active) return;
-        setSnapshot(inventory);
-        applyReorderDrafts(drafts);
-        setManagerTasks(tasks);
-        setTaskAssignees(assignees);
-        setCycleCountPlans(plans);
-      })
-      .catch(() => {
-        if (!active) return;
-        setSnapshot(null);
-        applyReorderDrafts([]);
-      });
+    void Promise.allSettled([
+      fetchInventorySnapshot(),
+      refreshReorderDrafts(),
+      fetchInventoryTasks(),
+      fetchTaskAssignees(),
+      fetchCycleCountPlans(),
+    ]).then(([inventory, drafts, tasks, assignees, plans]) => {
+      if (!active) return;
+      if (inventory.status === "fulfilled") {
+        setSnapshot(inventory.value);
+        setSnapshotError("");
+      } else {
+        setSnapshotError("Live inventory data could not be loaded. Check the API and PostgreSQL services, then retry.");
+      }
+      if (drafts.status === "fulfilled") applyReorderDrafts(drafts.value);
+      if (tasks.status === "fulfilled") setManagerTasks(tasks.value);
+      if (assignees.status === "fulfilled") setTaskAssignees(assignees.value);
+      if (plans.status === "fulfilled") setCycleCountPlans(plans.value);
+      const secondaryFailures = [drafts, tasks, assignees, plans].filter((result) => result.status === "rejected").length;
+      setAuxiliaryWarning(secondaryFailures > 0 ? `${secondaryFailures} supporting data section${secondaryFailures === 1 ? " is" : "s are"} temporarily unavailable.` : "");
+      setSnapshotLoading(false);
+    });
 
     const refreshLiveData = async () => {
       if (!active || document.visibilityState === "hidden") return;
-      try {
-        const [tasks, inventory, drafts, plans] = await Promise.all([
+      const [tasks, inventory, drafts, plans] = await Promise.allSettled([
           fetchInventoryTasks(),
           fetchInventorySnapshot(),
           refreshReorderDrafts(),
           fetchCycleCountPlans(),
-        ]);
-        if (!active) return;
-        setManagerTasks(tasks);
-        setSnapshot(inventory);
-        setReorderDrafts(drafts);
-        setCycleCountPlans(plans);
-      } catch {
-        // Keep the last visible data while the next automatic refresh retries.
+      ]);
+      if (!active) return;
+      if (tasks.status === "fulfilled") setManagerTasks(tasks.value);
+      if (inventory.status === "fulfilled") {
+        setSnapshot(inventory.value);
+        setSnapshotError("");
+        setAuxiliaryWarning("");
+      } else {
+        setAuxiliaryWarning("Automatic live refresh could not connect. The last successfully loaded data remains visible.");
       }
+      if (drafts.status === "fulfilled") setReorderDrafts(drafts.value);
+      if (plans.status === "fulfilled") setCycleCountPlans(plans.value);
     };
     const timer = window.setInterval(() => void refreshLiveData(), 8_000);
     const refreshOnFocus = () => void refreshLiveData();
@@ -138,7 +160,7 @@ export function ManagerDashboard({
       window.removeEventListener("focus", refreshOnFocus);
       document.removeEventListener("visibilitychange", refreshOnVisible);
     };
-  }, []);
+  }, [reloadKey]);
 
   const stockHealth = useMemo(() => {
     const balances = snapshot?.balances ?? [];
@@ -148,10 +170,7 @@ export function ManagerDashboard({
         available: 0,
         safety: balance.product.safetyStock,
       };
-      current.available += Math.max(
-        0,
-        balance.quantity - balance.reservedQuantity,
-      );
+      current.available += Math.max(0, balance.quantity);
       productStock.set(balance.product.id, current);
     }
     let critical = 0;
@@ -198,12 +217,41 @@ export function ManagerDashboard({
       .filter(
         (balance) =>
           balance.product.id === plannedProductId &&
-          balance.quantity - balance.reservedQuantity > 0,
+          balance.quantity > 0,
       )
       .sort((left, right) =>
         left.location.name.localeCompare(right.location.name),
       );
   }, [snapshot, plannedProductId]);
+  const plannedTaskLocationOptions = useMemo(() => {
+    if (!snapshot || !plannedProductId) return [];
+
+    const product = snapshot.products.find(
+      (entry) => entry.id === plannedProductId,
+    );
+    if (!product) return [];
+
+    return snapshot.locations
+      .map((location) => {
+        const balance = snapshot.balances.find(
+          (entry) =>
+            entry.product.id === plannedProductId &&
+            entry.location.id === location.id,
+        );
+        return {
+          location,
+          available: Math.max(0, balance?.quantity ?? 0),
+          unit: product.unit,
+        };
+      })
+      .filter(
+        (entry) =>
+          plannedTaskType === "RECEIVE" || entry.available > 0,
+      )
+      .sort((left, right) =>
+        left.location.name.localeCompare(right.location.name),
+      );
+  }, [snapshot, plannedProductId, plannedTaskType]);
   const selectedTransferSourceBalance = transferSourceBalances.find(
     (balance) => balance.location.id === plannedTransferSourceId,
   );
@@ -333,14 +381,16 @@ export function ManagerDashboard({
   );
   const isStockAdjustment = (transaction: ApiTransaction) =>
     transaction.referenceNumber?.startsWith("ADJUSTMENT-") === true ||
-    transaction.notes?.startsWith("Administrator correction") === true;
-  const selectedAdjustmentReason = selectedAuditTransaction?.notes?.includes("Reason:")
-    ? selectedAuditTransaction.notes.split("Reason:").slice(1).join("Reason:").trim()
-    : selectedAuditTransaction?.notes ?? "No reason recorded.";
+    transaction.notes?.startsWith("Administrator correction") === true ||
+    transaction.action === "DAMAGE";
+  const selectedAdjustmentReason = selectedAuditTransaction?.reviewNotes?.trim() ||
+    (selectedAuditTransaction?.notes?.includes("Reason:")
+      ? selectedAuditTransaction.notes.split("Reason:").slice(1).join("Reason:").trim()
+      : "No reason recorded.");
 
   function exportAuditHistory() {
     const escape = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
-    const rows = [["Transaction ID", "Date", "Action", "Product", "Quantity", "Source", "Destination", "Status", "Created by", "Approved by", "Reference", "Notes"], ...auditTransactions.map((transaction) => [transaction.id, transaction.createdAt, transaction.action, transaction.product.name, transaction.quantity, transaction.sourceLocation?.name ?? "", transaction.destinationLocation?.name ?? "", transaction.status, transaction.createdBy?.displayName ?? "", transaction.approvedBy?.displayName ?? "", transaction.referenceNumber ?? "", transaction.notes ?? ""])];
+    const rows = [["Transaction ID", "Date", "Action", "Product", "Quantity", "Source", "Destination", "Status", "Created by", "Approved by", "Reference", "Notes", "Review notes"], ...auditTransactions.map((transaction) => [transaction.id, transaction.createdAt, transaction.action, transaction.product.name, transaction.quantity, transaction.sourceLocation?.name ?? "", transaction.destinationLocation?.name ?? "", transaction.status, transaction.createdBy?.displayName ?? "", transaction.approvedBy?.displayName ?? "", transaction.referenceNumber ?? "", transaction.notes ?? "", transaction.reviewNotes ?? ""])];
     const blob = new Blob([rows.map((row) => row.map(escape).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -373,14 +423,32 @@ export function ManagerDashboard({
     transaction: ApiTransaction,
     decision: "approve" | "reject" | "recount",
   ) {
+    const damageAdjustmentReason = damageAdjustmentReasons[transaction.id]?.trim() ?? "";
+    if (transaction.action === "DAMAGE" && decision === "recount") {
+      setManagerMessage("Damage transactions cannot be sent for recount. Approve with an adjustment reason or reject the transaction.");
+      return;
+    }
+    if (transaction.action === "DAMAGE" && decision === "approve" && !damageAdjustmentReason) {
+      setManagerMessage("Enter an adjustment reason before approving damaged stock.");
+      return;
+    }
     setReviewingId(transaction.id);
     setManagerMessage("");
     try {
       if (decision === "approve") {
         await approveInventoryTransaction(
           transaction.id,
-          "Approved after manager review.",
+          transaction.action === "DAMAGE"
+            ? damageAdjustmentReason
+            : "Approved after manager review.",
         );
+        if (transaction.action === "DAMAGE") {
+          setDamageAdjustmentReasons((current) => {
+            const next = { ...current };
+            delete next[transaction.id];
+            return next;
+          });
+        }
         setManagerMessage(
           "Transaction approved and the validated stock adjustment was posted.",
         );
@@ -420,7 +488,7 @@ export function ManagerDashboard({
     const data = new FormData(form);
 
     try {
-      await createInventoryTask({
+      const taskInput = {
         type: plannedTaskType,
         priority: String(data.get("priority")),
         title: String(data.get("title")),
@@ -442,9 +510,23 @@ export function ManagerDashboard({
           plannedTaskType === "TRANSFER"
             ? plannedTransferDestinationId
             : undefined,
-      });
+      };
+      if (plannedTaskType === "CYCLE_COUNT") {
+        if (!plannedCycleLocationIds.length) {
+          throw new Error("Select at least one stocked location for the cycle count.");
+        }
+        await Promise.all(
+          plannedCycleLocationIds.map((locationId) =>
+            createInventoryTask({ ...taskInput, locationId }),
+          ),
+        );
+      } else {
+        await createInventoryTask(taskInput);
+      }
       setTaskMessage(
-        "Task assigned successfully and added to the Warehouse Executive queue.",
+        plannedTaskType === "CYCLE_COUNT"
+          ? `${plannedCycleLocationIds.length} cycle count task${plannedCycleLocationIds.length === 1 ? "" : "s"} assigned successfully.`
+          : "Task assigned successfully and added to the Warehouse Executive queue.",
       );
       setTaskMessageTone("info");
       form.reset();
@@ -452,6 +534,7 @@ export function ManagerDashboard({
       setPlannedTaskType("RECEIVE");
       setPlannedProductId("");
       setPlannedLocationId("");
+      setPlannedCycleLocationIds([]);
       setPlannedTransferQuantity("");
       setPlannedTransferSourceId("");
       setPlannedTransferDestinationId("");
@@ -464,18 +547,19 @@ export function ManagerDashboard({
     }
   }
 
-  async function handleDeleteOpenTask(task: ApiInventoryTask) {
-    if (!window.confirm(`Delete the open task “${task.title}”? It will be removed from the Warehouse Executive queue.`)) return;
+  async function handleCancelTask(task: ApiInventoryTask) {
+    if (!window.confirm(`Cancel “${task.title}”? The linked pending transaction will be cancelled without changing inventory. The audit record will be kept.`)) return;
     setDeletingTaskId(task.id);
     setTaskMessage("");
     try {
       await deleteInventoryTask(task.id);
-      setManagerTasks((current) => current.filter((entry) => entry.id !== task.id));
+      const refreshedTasks = await fetchInventoryTasks();
+      setManagerTasks(refreshedTasks.filter((entry) => entry.status !== "CANCELLED"));
       setTaskMessageTone("info");
-      setTaskMessage("Open task deleted successfully. It was removed from the Warehouse Executive queue.");
+      setTaskMessage("Task cancelled. No inventory changed; the audit record was kept as CANCELLED.");
     } catch (error) {
       setTaskMessageTone("error");
-      setTaskMessage(error instanceof Error ? error.message : "The open task could not be deleted.");
+      setTaskMessage(error instanceof Error ? error.message : "The task could not be cancelled.");
     } finally {
       setDeletingTaskId(null);
     }
@@ -552,14 +636,20 @@ export function ManagerDashboard({
     }
   }
 
-  if (page === "Reservations") {
-    return <div className="dashboard-content page-dashboard manager-dashboard" data-active-page={page}><StockReservationsPage /></div>;
-  }
-
   return (
     <div className="dashboard-content page-dashboard manager-dashboard" data-active-page={page}>
       {page === "Discrepancies" && (
         <DiscrepanciesPage />
+      )}
+
+      {snapshotError && (
+        <div role="alert" className="mb-5 flex flex-col gap-3 rounded-2xl border border-[#f0b8b8] bg-[#fff3f3] px-5 py-4 text-sm font-semibold text-[#9f3030] sm:flex-row sm:items-center sm:justify-between">
+          <span>{snapshotError}</span>
+          <button type="button" onClick={retryLiveData} className="w-fit rounded-xl bg-[#b63b3b] px-4 py-2 text-xs font-extrabold text-white">Retry live data</button>
+        </div>
+      )}
+      {auxiliaryWarning && !snapshotError && (
+        <div role="status" className="mb-5 rounded-2xl border border-[#ead59d] bg-[#fff9e9] px-5 py-3 text-sm font-semibold text-[#8b6008]">{auxiliaryWarning}</div>
       )}
 
       <section id="manager-overview-hero" className="manager-command-hero hero-3d relative overflow-hidden rounded-[26px] border border-[#d9e6f8] p-6 text-white sm:p-7">
@@ -578,7 +668,7 @@ export function ManagerDashboard({
             <WarehouseHero variant="manager" className="h-44 w-full" />
             <div className="manager-live-panel">
               <span className="manager-live-pulse" />
-              <div><strong>{snapshot?.products.length ?? 0}</strong><small>products monitored</small></div>
+              <div><strong>{snapshotLoading ? "…" : snapshot ? snapshot.products.length : "—"}</strong><small>{snapshot ? "products monitored" : "live data unavailable"}</small></div>
             </div>
           </div>
         </div>
@@ -587,23 +677,23 @@ export function ManagerDashboard({
       <div id="manager-overview-metrics" className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
         <MetricCard
           label="Active items"
-          value={snapshot ? String(snapshot.products.length) : "1,284"}
-          detail={snapshot ? "Loaded from PostgreSQL" : "Preview inventory catalogue"}
+          value={snapshotLoading ? "…" : snapshot ? String(snapshot.products.length) : "—"}
+          detail={snapshot ? "Loaded from PostgreSQL" : "Live inventory unavailable"}
           icon={Boxes}
           onClick={() => { onNavigate("Catalog"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
         />
         <MetricCard
           label="Pending approvals"
-          value={String(pendingApprovals)}
-          detail="Warehouse Executive-confirmed transactions requiring review"
+          value={snapshotLoading ? "…" : snapshot ? String(pendingApprovals) : "—"}
+          detail={snapshot ? "Warehouse Executive-confirmed transactions requiring review" : "Live transactions unavailable"}
           icon={ClipboardCheck}
           tone="amber"
           onClick={() => navigateToTransactions("needsReview")}
         />
         <MetricCard
           label="Low-stock items"
-          value={String(displayedLowStock.length)}
-          detail={snapshot ? "Calculated from safety levels" : "3 currently critical"}
+          value={snapshotLoading ? "…" : snapshot ? String(displayedLowStock.length) : "—"}
+          detail={snapshot ? "Calculated from safety levels" : "Live stock levels unavailable"}
           icon={AlertTriangle}
           tone="violet"
           onClick={() => {
@@ -620,9 +710,16 @@ export function ManagerDashboard({
             <h2 className="mt-1 text-lg font-extrabold text-[#102a56]">Live stock overview at a glance</h2>
             <p className="mt-1 text-xs text-[#8294ac]">Availability across every product and warehouse location, refreshed from live balances.</p>
           </div>
-          <span className="inline-flex w-fit items-center gap-2 rounded-full bg-[#eaf8f1] px-3 py-1 text-[10px] font-extrabold text-[#16865b]"><span className="h-2 w-2 animate-pulse rounded-full bg-[#20ad76]" />Live data</span>
+          <span className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1 text-[10px] font-extrabold ${snapshot ? "bg-[#eaf8f1] text-[#16865b]" : "bg-[#fff0f0] text-[#a73737]"}`}><span className={`h-2 w-2 rounded-full ${snapshot ? "animate-pulse bg-[#20ad76]" : "bg-[#d95c5c]"}`} />{snapshotLoading ? "Loading" : snapshot ? "Live data" : "Data unavailable"}</span>
         </div>
-        <div className="grid gap-6 p-6 lg:grid-cols-[auto_1fr_1.1fr]">
+        {!snapshot ? (
+          <div className="px-6 py-12 text-center">
+            <AlertTriangle size={28} className="mx-auto text-[#c04a4a]" />
+            <p className="mt-3 text-sm font-extrabold text-[#24466f]">Live stock data is unavailable</p>
+            <p className="mt-1 text-xs text-[#8093ab]">The dashboard will not display false zero balances. Start or reconnect the API and PostgreSQL services.</p>
+            <button type="button" onClick={retryLiveData} className="mt-4 rounded-xl bg-[#155eef] px-4 py-2.5 text-xs font-extrabold text-white">Retry live data</button>
+          </div>
+        ) : <div className="grid gap-6 p-6 lg:grid-cols-[auto_1fr_1.1fr]">
           <div className="flex flex-col items-center justify-center gap-3">
             <div className="relative">
               <svg viewBox="0 0 140 140" className="h-36 w-36 -rotate-90" role="img" aria-label={`${stockHealth.healthyPct}% of stock assignments are healthy`}>
@@ -705,7 +802,7 @@ export function ManagerDashboard({
               })}
             </div>
           </div>
-        </div>
+        </div>}
       </section>
 
       <section id="manager-overview-approvals" className="mt-6 overflow-hidden rounded-[24px] border border-[#e8d5a8] bg-white shadow-[0_14px_42px_rgba(16,45,82,0.055)]">
@@ -715,9 +812,15 @@ export function ManagerDashboard({
             <h2 className="mt-1 text-lg font-extrabold text-[#102a56]">Pending approvals</h2>
             <p className="mt-1 text-xs text-[#8294ac]">Warehouse Executive-confirmed transactions waiting for your decision.</p>
           </div>
-          <button type="button" onClick={() => navigateToTransactions("needsReview")} className="inline-flex w-fit items-center gap-2 rounded-xl bg-[#d47b08] px-4 py-2.5 text-xs font-extrabold text-white shadow-[0_8px_20px_rgba(212,123,8,0.25)] transition hover:bg-[#b86806]">Review all {pendingApprovals} <ChevronDown size={15} className="-rotate-90" /></button>
+          <button type="button" disabled={!snapshot} onClick={() => navigateToTransactions("needsReview")} className="inline-flex w-fit items-center gap-2 rounded-xl bg-[#d47b08] px-4 py-2.5 text-xs font-extrabold text-white shadow-[0_8px_20px_rgba(212,123,8,0.25)] transition hover:bg-[#b86806] disabled:cursor-not-allowed disabled:opacity-50">Review all {snapshot ? pendingApprovals : "—"} <ChevronDown size={15} className="-rotate-90" /></button>
         </div>
-        {pendingReviewTransactions.length === 0 ? (
+        {!snapshot ? (
+          <div className="px-6 py-10 text-center">
+            <AlertTriangle size={26} className="mx-auto text-[#c04a4a]" />
+            <p className="mt-3 text-sm font-extrabold text-[#24466f]">Approval data is unavailable</p>
+            <p className="mt-1 text-xs text-[#8093ab]">No approval count is shown until live transaction data reconnects.</p>
+          </div>
+        ) : pendingReviewTransactions.length === 0 ? (
           <div className="px-6 py-10 text-center">
             <CheckCircle2 size={26} className="mx-auto text-[#16865b]" />
             <p className="mt-3 text-sm font-extrabold text-[#24466f]">No confirmed transactions need review</p>
@@ -757,7 +860,7 @@ export function ManagerDashboard({
           <div>
             <p className="text-[11px] font-extrabold uppercase tracking-[0.15em] text-[#155eef]">Daily work planning</p>
             <h2 className="mt-1 text-lg font-extrabold text-[#102a56]">Assign and schedule Warehouse Executive tasks</h2>
-            <p className="mt-1 text-xs text-[#8294ac]">Assign regular operational work such as receiving, picking, transfers, stock checks and damage inspections.</p>
+            <p className="mt-1 text-xs text-[#8294ac]">Assign receiving, transfers, stock checks, damage inspections, or a one-product cycle count. Use the month-end plan below for monthly and multi-location counts.</p>
           </div>
           <span className="inline-flex w-fit items-center gap-2 rounded-full bg-[#eaf8f1] px-3 py-1 text-[10px] font-extrabold text-[#16865b]"><span className="h-2 w-2 animate-pulse rounded-full bg-[#20ad76]" />Queue syncs live</span>
         </div>
@@ -769,24 +872,46 @@ export function ManagerDashboard({
         )}
 
         <form onSubmit={savePlannedTask} className="mt-5 grid gap-4 rounded-2xl border border-[#cbdcf5] bg-[#f7faff] p-5 md:grid-cols-2 xl:grid-cols-4">
-          <label className="text-xs font-extrabold text-[#49617f]">Task type<select name="type" required value={plannedTaskType} onChange={(event) => { setPlannedTaskType(event.target.value); setPlannedLocationId(""); setPlannedTransferQuantity(""); setPlannedTransferSourceId(""); setPlannedTransferDestinationId(""); }} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3">{["RECEIVE","PICK","TRANSFER","STOCK_VERIFY","DAMAGE_INSPECTION"].map((value)=><option key={value} value={value}>{value.replaceAll("_"," ")}</option>)}</select></label>
+          <label className="text-xs font-extrabold text-[#49617f]">Task type<select name="type" required value={plannedTaskType} onChange={(event) => { setPlannedTaskType(event.target.value); setPlannedProductId(""); setPlannedLocationId(""); setPlannedCycleLocationIds([]); setPlannedTransferQuantity(""); setPlannedTransferSourceId(""); setPlannedTransferDestinationId(""); }} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3">{["RECEIVE","PICK","TRANSFER","CYCLE_COUNT","STOCK_VERIFY","DAMAGE_INSPECTION"].map((value)=><option key={value} value={value}>{value.replaceAll("_"," ")}</option>)}</select></label>
           <label className="text-xs font-extrabold text-[#49617f]">Priority<select name="priority" required defaultValue="MEDIUM" className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3">{["LOW","MEDIUM","HIGH","URGENT"].map((value)=><option key={value}>{value}</option>)}</select></label>
           <label className="text-xs font-extrabold text-[#49617f]">Assign to<select name="assignedToId" required defaultValue="" className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3"><option value="" disabled>Select executive</option>{taskAssignees.map((user)=><option key={user.id} value={user.id}>{user.displayName} — {[user.shift, user.warehouseZone].filter(Boolean).join(" · ") || user.employeeId}</option>)}</select></label>
           <label className="text-xs font-extrabold text-[#49617f]">Due date and time<input name="dueAt" type="datetime-local" value={taskDueValue} onChange={(event)=>setTaskDueValue(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3" /></label>
-          <label className="text-xs font-extrabold text-[#49617f] md:col-span-2">Task title<input name="title" required maxLength={150} placeholder={plannedTaskType === "TRANSFER" ? "Move stock to another location" : "Enter a clear task title"} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3" /></label>
-          <label className="text-xs font-extrabold text-[#49617f]">Product<select name="productId" required={plannedTaskType === "TRANSFER"} value={plannedProductId} onChange={(event) => { setPlannedProductId(event.target.value); setPlannedLocationId(""); setPlannedTransferQuantity(""); setPlannedTransferSourceId(""); setPlannedTransferDestinationId(""); }} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3"><option value="">{plannedTaskType === "TRANSFER" ? "Select product" : "Not required"}</option>{snapshot?.products.map((product)=><option key={product.id} value={product.id}>{product.sku} — {product.name}</option>)}</select></label>
-          {plannedTaskType !== "TRANSFER" && <label className="text-xs font-extrabold text-[#49617f]">
+          <label className="text-xs font-extrabold text-[#49617f] md:col-span-2">Task title<input name="title" required maxLength={150} placeholder={plannedTaskType === "TRANSFER" ? "Move stock to another location" : plannedTaskType === "CYCLE_COUNT" ? "Count product at its storage location" : "Enter a clear task title"} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3" /></label>
+          <label className="text-xs font-extrabold text-[#49617f]">Product<select name="productId" required={plannedTaskType === "TRANSFER" || plannedTaskType === "CYCLE_COUNT"} value={plannedProductId} onChange={(event) => { setPlannedProductId(event.target.value); setPlannedLocationId(""); setPlannedCycleLocationIds([]); setPlannedTransferQuantity(""); setPlannedTransferSourceId(""); setPlannedTransferDestinationId(""); }} className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3"><option value="">{plannedTaskType === "TRANSFER" || plannedTaskType === "CYCLE_COUNT" ? "Select product" : "Not required"}</option>{snapshot?.products.map((product)=><option key={product.id} value={product.id}>{product.sku} — {product.name}</option>)}</select></label>
+          {plannedTaskType === "CYCLE_COUNT" ? <fieldset className="rounded-xl border border-[#cbdcf5] bg-white p-3 md:col-span-2 xl:col-span-2">
+            <legend className="px-2 text-xs font-extrabold text-[#49617f]">Locations to count</legend>
+            {!plannedProductId ? <p className="px-2 py-2 text-xs font-semibold text-[#8294ac]">Select a product first.</p> : plannedTaskLocationOptions.length === 0 ? <p className="px-2 py-2 text-xs font-semibold text-[#a73737]">This product has no available stock location.</p> : <div className="grid gap-2 sm:grid-cols-2">
+              {plannedTaskLocationOptions.map((entry) => {
+                const selected = plannedCycleLocationIds.includes(entry.location.id);
+                return <label key={entry.location.id} className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 transition ${selected ? "border-[#7257d6] bg-[#f6f1ff]" : "border-[#e2e9f3] hover:border-[#cbbbed]"}`}>
+                  <input type="checkbox" checked={selected} onChange={() => setPlannedCycleLocationIds((current) => selected ? current.filter((id) => id !== entry.location.id) : [...current, entry.location.id])} className="h-4 w-4 accent-[#7257d6]" />
+                  <span className="min-w-0 text-xs font-extrabold text-[#29466f]">{entry.location.code} — {entry.location.name}<span className="block text-[10px] font-semibold text-[#8294ac]">{entry.available} {entry.unit} available</span></span>
+                </label>;
+              })}
+            </div>}
+            <p className="mt-2 px-2 text-[10px] font-semibold text-[#8294ac]">A separate task is created for each selected location.</p>
+          </fieldset> : plannedTaskType !== "TRANSFER" && <label className="text-xs font-extrabold text-[#49617f]">
             Location
             <select
               name="locationId"
+              required={Boolean(plannedProductId)}
               value={plannedLocationId}
               onChange={(event) => setPlannedLocationId(event.target.value)}
-              className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3"
+              disabled={!plannedProductId}
+              className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3 disabled:cursor-not-allowed disabled:bg-[#eef2f7]"
             >
-              <option value="">Not required</option>
-              {snapshot?.locations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.code} — {location.name}
+              <option value="">
+                {!plannedProductId
+                  ? "Select product first"
+                  : plannedTaskLocationOptions.length === 0
+                    ? "No location has available stock"
+                    : plannedTaskType === "RECEIVE"
+                      ? "Select destination location"
+                      : "Select stocked location"}
+              </option>
+              {plannedTaskLocationOptions.map((entry) => (
+                <option key={entry.location.id} value={entry.location.id}>
+                  {entry.location.code} — {entry.location.name} — {entry.available} {entry.unit} available
                 </option>
               ))}
             </select>
@@ -798,7 +923,7 @@ export function ManagerDashboard({
                 name="quantity"
                 type="number"
                 min={1}
-                max={selectedTransferSourceBalance ? selectedTransferSourceBalance.quantity - selectedTransferSourceBalance.reservedQuantity : undefined}
+                max={selectedTransferSourceBalance ? selectedTransferSourceBalance.quantity : undefined}
                 required
                 value={plannedTransferQuantity}
                 onChange={(event) => setPlannedTransferQuantity(event.target.value)}
@@ -818,7 +943,7 @@ export function ManagerDashboard({
                 className="mt-2 h-11 w-full rounded-xl border border-[#d5e1f0] bg-white px-3 disabled:cursor-not-allowed disabled:bg-[#eef2f7]"
               >
                 <option value="">{plannedProductId ? transferSourceBalances.length ? "Select stock location" : "No location has available stock" : "Select product first"}</option>
-                {transferSourceBalances.map((balance) => <option key={balance.location.id} value={balance.location.id}>{balance.location.code} — {balance.location.name} — {balance.quantity - balance.reservedQuantity} {balance.product.unit} available</option>)}
+                {transferSourceBalances.map((balance) => <option key={balance.location.id} value={balance.location.id}>{balance.location.code} — {balance.location.name} — {balance.quantity} {balance.product.unit} available</option>)}
               </select>
             </label>
             <label className="text-xs font-extrabold text-[#49617f]">
@@ -838,7 +963,7 @@ export function ManagerDashboard({
             {selectedTransferSourceBalance && plannedTransferDestinationId && transferQuantity > 0 && <div className="rounded-xl border border-[#bcd4f8] bg-white p-3 text-xs font-semibold text-[#49617f] md:col-span-2 xl:col-span-4">
               <p className="font-extrabold text-[#17345f]">Transfer preview — total inventory stays the same</p>
               <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                <span>Pick from: {selectedTransferSourceBalance.location.name} {selectedTransferSourceBalance.quantity - selectedTransferSourceBalance.reservedQuantity} → {selectedTransferSourceBalance.quantity - selectedTransferSourceBalance.reservedQuantity - transferQuantity}</span>
+                <span>Pick from: {selectedTransferSourceBalance.location.name} {selectedTransferSourceBalance.quantity} → {selectedTransferSourceBalance.quantity - transferQuantity}</span>
                 <span>Transfer to: {snapshot?.locations.find((location) => location.id === plannedTransferDestinationId)?.name} {selectedTransferDestinationBalance?.quantity ?? 0} → {(selectedTransferDestinationBalance?.quantity ?? 0) + transferQuantity}</span>
                 <span>Move: {transferQuantity} {selectedTransferProduct?.unit ?? "unit"}</span>
               </div>
@@ -1045,15 +1170,15 @@ export function ManagerDashboard({
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     <span className={`inline-flex h-fit items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${taskStatusTone(task.status)}`}>{task.status === "IN_PROGRESS" && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#7257d6]" />}{task.status.replaceAll("_", " ")}</span>
-                    {task.status === "OPEN" && (
+                    {(task.status === "OPEN" || task.status === "IN_PROGRESS") && (
                       <button
                         type="button"
                         disabled={deletingTaskId === task.id}
-                        onClick={() => void handleDeleteOpenTask(task)}
-                        aria-label={`Delete open task ${task.title}`}
+                        onClick={() => void handleCancelTask(task)}
+                        aria-label={`Cancel task ${task.title}`}
                         className="inline-flex items-center gap-1 rounded-lg border border-[#efb5b5] bg-white px-2.5 py-1.5 text-[10px] font-extrabold text-[#b83f3f] transition hover:bg-[#fff2f2] disabled:cursor-wait disabled:opacity-50"
                       >
-                        <Trash2 size={12} /> {deletingTaskId === task.id ? "Deleting…" : "Delete"}
+                        <Trash2 size={12} /> {deletingTaskId === task.id ? "Cancelling…" : "Cancel task"}
                       </button>
                     )}
                   </div>
@@ -1224,23 +1349,47 @@ export function ManagerDashboard({
                     </p>
                   </div>
                 </div>
-                <div className="mt-5 grid gap-2.5 border-t border-[#f0f3f8] pt-5 sm:grid-cols-3">
+                {transaction.action === "DAMAGE" && (
+                  <div className="mt-5 border-t border-[#f0f3f8] pt-5">
+                    <label htmlFor={`damage-reason-${transaction.id}`} className="text-xs font-extrabold text-[#24466f]">
+                      Adjustment reason <span className="text-[#c94b4b]">*</span>
+                    </label>
+                    <textarea
+                      id={`damage-reason-${transaction.id}`}
+                      value={damageAdjustmentReasons[transaction.id] ?? ""}
+                      onChange={(event) => setDamageAdjustmentReasons((current) => ({
+                        ...current,
+                        [transaction.id]: event.target.value,
+                      }))}
+                      maxLength={500}
+                      rows={3}
+                      placeholder="Example: Product was damaged during warehouse handling."
+                      className="mt-2 w-full resize-y rounded-xl border border-[#d5e1f0] bg-white px-3 py-2.5 text-xs font-semibold text-[#29466f] outline-none transition focus:border-[#155eef] focus:ring-2 focus:ring-[#155eef]/15"
+                    />
+                    <p className="mt-1 text-[11px] font-semibold text-[#8294ac]">
+                      Required before damaged stock can be adjusted and posted.
+                    </p>
+                  </div>
+                )}
+                <div className={`grid gap-2.5 ${transaction.action === "DAMAGE" ? "mt-3 sm:grid-cols-2" : "mt-5 border-t border-[#f0f3f8] pt-5 sm:grid-cols-3"}`}>
                   <button
                     type="button"
-                    disabled={reviewingId === transaction.id}
+                    disabled={reviewingId === transaction.id || (transaction.action === "DAMAGE" && !(damageAdjustmentReasons[transaction.id]?.trim()))}
                     onClick={() => void reviewTransaction(transaction, "approve")}
                     className="rounded-xl bg-[#16865b] px-4 py-3 text-xs font-extrabold text-white shadow-[0_8px_18px_rgba(22,134,91,0.22)] disabled:opacity-60"
                   >
                     Approve and post
                   </button>
-                  <button
-                    type="button"
-                    disabled={reviewingId === transaction.id}
-                    onClick={() => void reviewTransaction(transaction, "recount")}
-                    className="rounded-xl border border-[#e0bd70] bg-[#fffaf0] px-4 py-2.5 text-xs font-extrabold text-[#b36d0c] disabled:opacity-60"
-                  >
-                    Request recount
-                  </button>
+                  {transaction.action !== "DAMAGE" && (
+                    <button
+                      type="button"
+                      disabled={reviewingId === transaction.id}
+                      onClick={() => void reviewTransaction(transaction, "recount")}
+                      className="rounded-xl border border-[#e0bd70] bg-[#fffaf0] px-4 py-2.5 text-xs font-extrabold text-[#b36d0c] disabled:opacity-60"
+                    >
+                      Request recount
+                    </button>
+                  )}
                   <button
                     type="button"
                     disabled={reviewingId === transaction.id}

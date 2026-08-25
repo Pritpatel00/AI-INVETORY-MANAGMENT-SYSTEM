@@ -19,7 +19,6 @@ import { AssignWorkerDto } from "./dto/assign-worker.dto";
 
 export interface SetupStatus {
   locationCreated: boolean;
-  supplierCreated: boolean;
   productCreated: boolean;
   productAssigned: boolean;
   openingStockEntered: boolean;
@@ -33,10 +32,9 @@ export class SetupService {
 
   /** Setup progress always comes from real PostgreSQL records — never localStorage. */
   async getStatus(): Promise<SetupStatus> {
-    const [locations, suppliers, products, assignments, stockedAssignments, assignedWorkers] =
+    const [locations, products, assignments, stockedAssignments, assignedWorkers] =
       await Promise.all([
         this.prisma.location.count({ where: { active: true } }),
-        this.prisma.supplier.count({ where: { active: true } }),
         this.prisma.product.count({ where: { active: true } }),
         this.prisma.inventoryBalance.count(),
         this.prisma.inventoryBalance.count({ where: { quantity: { gt: 0 } } }),
@@ -51,7 +49,6 @@ export class SetupService {
       ]);
 
     const locationCreated = locations > 0;
-    const supplierCreated = suppliers > 0;
     const productCreated = products > 0;
     const productAssigned = assignments > 0;
     const openingStockEntered = stockedAssignments > 0;
@@ -59,17 +56,15 @@ export class SetupService {
 
     const completed = [
       locationCreated,
-      supplierCreated,
       productCreated,
       productAssigned,
       openingStockEntered,
       workerAssigned,
     ].filter(Boolean).length;
-    const completionPercent = Math.round((completed / 6) * 100);
+    const completionPercent = Math.round((completed / 5) * 100);
 
     return {
       locationCreated,
-      supplierCreated,
       productCreated,
       productAssigned,
       openingStockEntered,
@@ -80,12 +75,10 @@ export class SetupService {
 
   /** Everything the Review step needs to show, from real records only. */
   async getSummary() {
-    const [locations, suppliers, products, balances, workers] = await Promise.all([
+    const [locations, products, balances, workers] = await Promise.all([
       this.prisma.location.findMany({ where: { active: true }, orderBy: { code: "asc" } }),
-      this.prisma.supplier.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
       this.prisma.product.findMany({
         where: { active: true },
-        include: { supplier: true },
         orderBy: { name: "asc" },
       }),
       this.prisma.inventoryBalance.findMany({
@@ -100,7 +93,7 @@ export class SetupService {
       }),
     ]);
 
-    return { locations, suppliers, products, balances, workers };
+    return { locations, products, balances, workers };
   }
 
   /**

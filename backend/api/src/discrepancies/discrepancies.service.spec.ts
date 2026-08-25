@@ -82,7 +82,6 @@ function createPrismaMock(overrides: {
     productId: "prod-1",
     locationId: "loc-1",
     quantity: 100,
-    reservedQuantity: 0,
   }));
   const balanceUpsert = jest.fn(async (args: unknown) => ({
     id: "balance-1",
@@ -761,7 +760,6 @@ describe("DiscrepanciesService — resolve as transfer", () => {
     (prisma.inventoryBalance.findUnique as jest.Mock).mockResolvedValue({
       id: "balance-1",
       quantity: 5,
-      reservedQuantity: 0,
     });
     await expect(
       service.resolveTransfer(
@@ -793,8 +791,8 @@ describe("DiscrepanciesService — resolve as transfer", () => {
     (prisma.inventoryBalance.findUnique as jest.Mock).mockImplementation(
       async (args: { where: { productId_locationId: { locationId: string } } }) =>
         args.where.productId_locationId.locationId === "packing"
-          ? { quantity: 100, reservedQuantity: 0 }
-          : { quantity: 0, reservedQuantity: 0 },
+          ? { quantity: 100 }
+          : { quantity: 0 },
     );
 
     await service.resolveTransfer(

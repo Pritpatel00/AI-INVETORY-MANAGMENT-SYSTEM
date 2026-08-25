@@ -428,7 +428,7 @@ export function DiscrepanciesPage() {
         (balance) =>
           balance.product.id === selected.product.id &&
           balance.location.id !== selected.location.id &&
-          balance.quantity - balance.reservedQuantity >= transferQuantity,
+          balance.quantity >= transferQuantity,
       )
       .sort((left, right) =>
         left.location.name.localeCompare(right.location.name),
@@ -457,8 +457,7 @@ export function DiscrepanciesPage() {
   const transferSourceAfter = transferSourceBefore - transferQuantity;
   const transferDestinationAfter = transferDestinationBefore + transferQuantity;
   const transferHasEnoughAvailable =
-    transferSourceBefore - (transferSourceBalance?.reservedQuantity ?? 0) >=
-    transferQuantity;
+    transferSourceBefore >= transferQuantity;
 
   // A decision can never race an in-flight recount. The backend refuses
   // approve/reject/transfer while the recount task is OPEN or IN_PROGRESS;
@@ -895,7 +894,7 @@ export function DiscrepanciesPage() {
                 <th className="px-5 py-3">Product</th>
                 <th className="px-5 py-3">SKU</th>
                 <th className="px-5 py-3">Location</th>
-                <th className="px-5 py-3 text-right">Expected</th>
+                <th className="px-5 py-3 text-right">Available Stock</th>
                 <th className="px-5 py-3 text-right">Counted</th>
                 <th className="px-5 py-3 text-right">Difference</th>
                 <th className="px-5 py-3 text-right">%</th>
@@ -1368,7 +1367,7 @@ export function DiscrepanciesPage() {
                           </option>
                           {positiveLocationDifference && transferSourceOptions.map((balance) => (
                             <option key={balance.location.id} value={balance.location.id}>
-                              {balance.location.code} — {balance.location.name} — {balance.quantity - balance.reservedQuantity} {balance.product.unit} available
+                              {balance.location.code} — {balance.location.name} — {balance.quantity} {balance.product.unit} available
                             </option>
                           ))}
                           {!positiveLocationDifference && (
@@ -1425,7 +1424,7 @@ export function DiscrepanciesPage() {
                               {transferSourceBefore} → {transferSourceAfter}
                             </p>
                             <p className="mt-1 text-[10px] font-semibold text-[#7f91a8]">
-                              Available before: {transferSourceBefore - (transferSourceBalance?.reservedQuantity ?? 0)}
+                              Available before: {transferSourceBefore}
                             </p>
                           </div>
                           <div className="rounded-xl bg-[#eef9f3] p-3">

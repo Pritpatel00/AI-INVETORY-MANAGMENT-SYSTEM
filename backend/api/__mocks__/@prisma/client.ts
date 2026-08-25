@@ -126,29 +126,6 @@ export const StockCondition = {
 
 export type StockCondition = (typeof StockCondition)[keyof typeof StockCondition];
 
-export const StockRequestStatus = {
-  CONFIRMED: "CONFIRMED",
-  PARTIALLY_RESERVED: "PARTIALLY_RESERVED",
-  FULLY_RESERVED: "FULLY_RESERVED",
-  PARTIALLY_FULFILLED: "PARTIALLY_FULFILLED",
-  COMPLETED: "COMPLETED",
-  CANCELLED: "CANCELLED",
-  EXPIRED: "EXPIRED",
-} as const;
-
-export type StockRequestStatus = (typeof StockRequestStatus)[keyof typeof StockRequestStatus];
-
-export const StockReservationStatus = {
-  ACTIVE: "ACTIVE",
-  PARTIALLY_SHIPPED: "PARTIALLY_SHIPPED",
-  COMPLETED: "COMPLETED",
-  RELEASED: "RELEASED",
-  CANCELLED: "CANCELLED",
-  EXPIRED: "EXPIRED",
-} as const;
-
-export type StockReservationStatus = (typeof StockReservationStatus)[keyof typeof StockReservationStatus];
-
 export const TaskType = {
   RECOUNT: "RECOUNT",
   CYCLE_COUNT: "CYCLE_COUNT",

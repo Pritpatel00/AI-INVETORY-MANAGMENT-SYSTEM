@@ -116,7 +116,7 @@ export class InventoryController {
 
   @Delete("default-data")
   @Roles("manager", "administrator")
-  @ApiOperation({ summary: "Remove all default inventory data (products, locations, suppliers, balances, transactions, reorder drafts, tasks and voice evidence)." })
+  @ApiOperation({ summary: "Remove all default inventory data (products, locations, balances, transactions, reorder drafts, tasks and voice evidence)." })
   @ApiOkResponse({ description: "All default inventory data was removed. Users are preserved." })
   removeDefaultData(@Req() request: AuthenticatedRequest) {
     return this.inventoryService.removeDefaultData(request.authUser!);

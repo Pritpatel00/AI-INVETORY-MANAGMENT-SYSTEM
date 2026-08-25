@@ -71,3 +71,10 @@ next-env.d.ts
 
 # local data migration backups
 /backend/api/prisma/backups/
+.aider*
+
+# local coding-agent state (not application source)
+/.devin/
+/hive/
+/roster-backups/
+/roster.json

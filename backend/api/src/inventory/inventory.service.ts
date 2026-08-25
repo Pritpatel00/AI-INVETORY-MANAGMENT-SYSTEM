@@ -33,7 +33,6 @@ import { DiscrepancyRulesService } from "../discrepancies/discrepancy-rules.serv
 import { DiscrepanciesService } from "../discrepancies/discrepancies.service";
 import { DiscrepancyAuditService } from "../discrepancies/discrepancy-audit.service";
 import { NotificationsService } from "../notifications/notifications.service";
-import { ReservationsService } from "../reservations/reservations.service";
 
 const transactionInclude = {
   product: true,
@@ -44,14 +43,13 @@ const transactionInclude = {
   // Managers show a photo-evidence badge with the number of photos attached
   // to each transaction (worker uploads for Damage/Receive).
   _count: { select: { evidence: true } },
-  // The shipment task a transaction was created from (one-to-one via the
-  // task's sourceTransactionId) so the confirmation router can apply the
-  // reservation-aware shipment posting.
+  // The task a transaction was created from (one-to-one via the task's
+  // sourceTransactionId) is retained for task completion and audit history.
   task: true,
 } satisfies Prisma.InventoryTransactionInclude;
 
 const reorderDraftInclude = {
-  product: { include: { supplier: true } },
+  product: true,
   location: true,
 } satisfies Prisma.ReorderDraftInclude;
 
@@ -65,14 +63,12 @@ export class InventoryService {
     private readonly discrepancies: DiscrepanciesService,
     private readonly auditService: DiscrepancyAuditService,
     private readonly notifications: NotificationsService,
-    private readonly reservations: ReservationsService,
   ) {}
 
   listProducts() {
     return this.prisma.product.findMany({
       where: { active: true },
       include: {
-        supplier: true,
         balances: {
           include: { location: true },
           orderBy: { location: { code: "asc" } },
@@ -88,22 +84,12 @@ export class InventoryService {
     if (existing && existing.active) {
       throw new ConflictException(`Product SKU ${sku} already exists.`);
     }
-    const supplier = input.supplierId ? await this.prisma.supplier.findFirst({ where: { id: input.supplierId, active: true } }) : null;
-    if (input.supplierId && !supplier) throw new NotFoundException("Active supplier not found.");
-    if (supplier && input.reorderQuantity < supplier.minimumOrderQuantity) {
-      throw new BadRequestException(
-        `Reorder quantity ${input.reorderQuantity} is below ${supplier.name}'s minimum order quantity of ${supplier.minimumOrderQuantity}.`,
-      );
-    }
     const data = {
       sku,
       name: input.name.trim(),
       unit: input.unit.trim().toLowerCase(),
       safetyStock: input.safetyStock,
       reorderQuantity: input.reorderQuantity,
-      supplierId: supplier?.id ?? null,
-      supplierName: (supplier?.name ?? input.supplierName?.trim()) || null,
-      supplierEmail: (supplier?.email ?? input.supplierEmail?.trim().toLowerCase()) || null,
       controlled: input.controlled ?? false,
     };
     try {
@@ -145,7 +131,7 @@ export class InventoryService {
     const stockedBalances = await this.prisma.inventoryBalance.findMany({
       where: {
         productId: id,
-        OR: [{ quantity: { gt: 0 } }, { reservedQuantity: { gt: 0 } }],
+        quantity: { gt: 0 },
       },
       include: { location: true },
     });
@@ -187,24 +173,6 @@ export class InventoryService {
       const duplicate = await this.prisma.product.findUnique({ where: { sku } });
       if (duplicate) throw new ConflictException(`Product SKU ${sku} already exists.`);
     }
-    const supplier = input.supplierId ? await this.prisma.supplier.findFirst({ where: { id: input.supplierId, active: true } }) : null;
-    if (input.supplierId && !supplier) throw new NotFoundException("Active supplier not found.");
-    const effectiveSupplier =
-      input.supplierId !== undefined
-        ? supplier
-        : product.supplierId
-          ? await this.prisma.supplier.findFirst({ where: { id: product.supplierId, active: true } })
-          : null;
-    const effectiveReorderQuantity = input.reorderQuantity ?? product.reorderQuantity;
-    if (
-      (input.reorderQuantity !== undefined || input.supplierId !== undefined) &&
-      effectiveSupplier &&
-      effectiveReorderQuantity < effectiveSupplier.minimumOrderQuantity
-    ) {
-      throw new BadRequestException(
-        `Reorder quantity ${effectiveReorderQuantity} is below ${effectiveSupplier.name}'s minimum order quantity of ${effectiveSupplier.minimumOrderQuantity}.`,
-      );
-    }
     return this.prisma.product.update({
       where: { id },
       data: {
@@ -213,9 +181,6 @@ export class InventoryService {
         ...(input.unit !== undefined ? { unit: input.unit.trim().toLowerCase() } : {}),
         ...(input.safetyStock !== undefined ? { safetyStock: input.safetyStock } : {}),
         ...(input.reorderQuantity !== undefined ? { reorderQuantity: input.reorderQuantity } : {}),
-        ...(input.supplierName !== undefined ? { supplierName: input.supplierName.trim() || null } : {}),
-        ...(input.supplierEmail !== undefined ? { supplierEmail: input.supplierEmail.trim().toLowerCase() || null } : {}),
-        ...(input.supplierId !== undefined ? { supplierId: supplier?.id ?? null, supplierName: supplier?.name ?? null, supplierEmail: supplier?.email ?? null } : {}),
         ...(input.controlled !== undefined ? { controlled: input.controlled } : {}),
       },
     });
@@ -241,7 +206,7 @@ export class InventoryService {
     if (code && code !== current.code && await this.prisma.location.findUnique({ where: { code } })) throw new ConflictException(`Location code ${code} already exists.`);
     if (input.active === false) {
       const [stock, pending] = await Promise.all([
-        this.prisma.inventoryBalance.count({ where: { locationId: id, OR: [{ quantity: { gt: 0 } }, { reservedQuantity: { gt: 0 } }] } }),
+        this.prisma.inventoryBalance.count({ where: { locationId: id, quantity: { gt: 0 } } }),
         this.prisma.inventoryTransaction.count({ where: { status: TransactionStatus.PENDING, OR: [{ sourceLocationId: id }, { destinationLocationId: id }] } }),
       ]);
       if (stock || pending) throw new ConflictException("This location cannot be deactivated while it contains stock or pending transactions.");
@@ -278,9 +243,6 @@ export class InventoryService {
 
   async createOpeningBalance(input: OpeningBalanceDto, actor: AuthenticatedUser) {
     this.assertAdministratorAccess(actor);
-    if (input.reservedQuantity > input.quantity) {
-      throw new BadRequestException("Reserved quantity cannot be greater than the opening quantity.");
-    }
     const reason = input.reason.trim();
     if (!reason) throw new BadRequestException("An opening-stock reason is required.");
 
@@ -300,7 +262,7 @@ export class InventoryService {
         if (existing) throw new ConflictException("This product is already assigned to the selected location. Use an inventory adjustment instead.");
 
         const balance = await database.inventoryBalance.create({
-          data: { productId: input.productId, locationId: input.locationId, quantity: input.quantity, reservedQuantity: input.reservedQuantity },
+          data: { productId: input.productId, locationId: input.locationId, quantity: input.quantity },
           include: { product: true, location: true },
         });
         const postedAt = new Date();
@@ -314,7 +276,7 @@ export class InventoryService {
             systemQuantityBefore: 0,
             systemQuantityAfter: input.quantity,
             referenceNumber: `OPENING-${input.effectiveDate.replaceAll("-", "")}`,
-            notes: `Opening stock effective ${input.effectiveDate}. ${reason} Reserved quantity: ${input.reservedQuantity}.`,
+            notes: `Opening stock effective ${input.effectiveDate}. ${reason}`,
             createdById: user.id,
             approvedById: user.id,
             confirmedAt: postedAt,
@@ -336,17 +298,16 @@ export class InventoryService {
 
   async adjustBalance(input: AdjustBalanceDto, actor: AuthenticatedUser) {
     this.assertAdministratorAccess(actor);
-    if (input.reservedQuantity > input.quantity) throw new BadRequestException("Reserved quantity cannot be greater than the corrected quantity.");
     const reason = input.reason.trim();
     if (!reason) throw new BadRequestException("An adjustment reason is required.");
     const user = await this.resolveUser(actor);
     return this.prisma.$transaction(async (database) => {
       const current = await database.inventoryBalance.findUnique({ where: { id: input.balanceId } });
       if (!current) throw new NotFoundException("Inventory balance not found.");
-      const balance = await database.inventoryBalance.update({ where: { id: current.id }, data: { quantity: input.quantity, reservedQuantity: input.reservedQuantity }, include: { product: true, location: true } });
+      const balance = await database.inventoryBalance.update({ where: { id: current.id }, data: { quantity: input.quantity }, include: { product: true, location: true } });
       const postedAt = new Date();
       const transaction = await database.inventoryTransaction.create({
-        data: { action: InventoryAction.CYCLE_COUNT, status: TransactionStatus.POSTED, productId: current.productId, sourceLocationId: current.locationId, quantity: input.quantity, systemQuantityBefore: current.quantity, systemQuantityAfter: input.quantity, referenceNumber: `ADJUSTMENT-${postedAt.toISOString().slice(0,10).replaceAll("-","")}`, notes: `Administrator correction from ${current.quantity} on hand / ${current.reservedQuantity} reserved to ${input.quantity} on hand / ${input.reservedQuantity} reserved. Reason: ${reason}`, createdById: user.id, approvedById: user.id, confirmedAt: postedAt, approvedAt: postedAt, postedAt },
+        data: { action: InventoryAction.CYCLE_COUNT, status: TransactionStatus.POSTED, productId: current.productId, sourceLocationId: current.locationId, quantity: input.quantity, systemQuantityBefore: current.quantity, systemQuantityAfter: input.quantity, referenceNumber: `ADJUSTMENT-${postedAt.toISOString().slice(0,10).replaceAll("-","")}`, notes: `Administrator correction from ${current.quantity} on hand to ${input.quantity} on hand. Reason: ${reason}`, createdById: user.id, approvedById: user.id, confirmedAt: postedAt, approvedAt: postedAt, postedAt },
         include: transactionInclude,
       });
       return { balance, transaction };
@@ -369,7 +330,6 @@ export class InventoryService {
       this.prisma.userAccessAudit.deleteMany(),
       this.prisma.product.deleteMany(),
       this.prisma.location.deleteMany(),
-      this.prisma.supplier.deleteMany(),
     ]);
 
     const counts = {
@@ -382,7 +342,6 @@ export class InventoryService {
       accessAudit: deleted[6].count,
       products: deleted[7].count,
       locations: deleted[8].count,
-      suppliers: deleted[9].count,
     };
     return { cleared: true, counts };
   }
@@ -394,7 +353,13 @@ export class InventoryService {
     if (!canReviewAll) {
       return this.prisma.inventoryTransaction.findMany({
         take: 100,
-        where: { createdById: user.id },
+        where: {
+          createdById: user.id,
+          // Exclude transient unconfirmed PENDING records — these are internal
+          // workflow objects that only exist between create and confirm and
+          // should never appear in the audit history.
+          confirmedAt: { not: null },
+        },
         include: transactionInclude,
         orderBy: { createdAt: "desc" },
       });
@@ -415,6 +380,10 @@ export class InventoryService {
       }),
       this.prisma.inventoryTransaction.findMany({
         take: 100,
+        // Exclude transient unconfirmed PENDING records so only finalized
+        // transactions (POSTED, PENDING+confirmed, REJECTED, etc.) appear
+        // in the audit history.
+        where: { confirmedAt: { not: null } },
         include: transactionInclude,
         orderBy: { createdAt: "desc" },
       }),
@@ -625,50 +594,69 @@ export class InventoryService {
           status: TransactionStatus.PENDING,
         },
       });
-      // A voice-confirmed reservation shipment links its Ship transaction to
-      // the assigned SHIP task. The confirmation router then applies the
-      // reservation-aware movement (on-hand and reserved both decrease and
-      // the reservation moves towards fulfilled) instead of a plain Ship.
-      // A Month-End Cycle Count task links its count transaction through the
-      // transaction's taskId so the plan can report which tasks produced
-      // discrepancies and the task completes atomically with confirmation.
+      // Link every assigned inventory task to the transaction it produced.
+      // This lets confirmation post/submit the inventory result and complete
+      // the worker task atomically instead of relying on a second API call.
       if (input.taskId) {
         const task = await database.inventoryTask.findUnique({ where: { id: input.taskId } });
         if (!task) throw new NotFoundException("Task not found.");
         if (task.status === TaskStatus.COMPLETED || task.status === TaskStatus.CANCELLED) {
           throw new ConflictException("This task can no longer be worked on.");
         }
-        if (task.type === TaskType.SHIP) {
-          if (!task.reservationId) {
-            throw new BadRequestException("This task is not a reservation shipment task.");
-          }
-          if (!task.assignedToId || task.assignedToId !== user.id) {
-            throw new ForbiddenException("This shipment task is assigned to another warehouse executive.");
-          }
-          if (task.productId !== input.productId || task.sourceLocationId !== input.sourceLocationId) {
-            throw new BadRequestException("The transaction details do not match the assigned shipment task.");
-          }
-          await database.inventoryTask.update({
-            where: { id: task.id },
-            data: { sourceTransactionId: transaction.id },
-          });
-        } else if (task.type === TaskType.CYCLE_COUNT) {
-          if (input.action !== InventoryAction.CYCLE_COUNT) {
-            throw new BadRequestException("This task can only be linked to a cycle-count transaction.");
-          }
-          if (!task.assignedToId || task.assignedToId !== user.id) {
-            throw new ForbiddenException("This task is assigned to another warehouse executive.");
-          }
-          if (task.productId !== input.productId || task.locationId !== input.sourceLocationId) {
-            throw new BadRequestException("The transaction details do not match the assigned cycle-count task.");
-          }
-          await database.inventoryTransaction.update({
-            where: { id: transaction.id },
-            data: { taskId: task.id },
-          });
-        } else {
-          throw new BadRequestException("This task cannot be linked to an inventory transaction.");
+        if (!task.assignedToId || task.assignedToId !== user.id) {
+          throw new ForbiddenException(
+            "This task is assigned to another warehouse executive.",
+          );
         }
+        if (task.productId && task.productId !== input.productId) {
+          throw new BadRequestException(
+            "The transaction item does not match the assigned task.",
+          );
+        }
+
+        const expectedActionByTask: Partial<Record<TaskType, InventoryAction>> = {
+          [TaskType.CYCLE_COUNT]: InventoryAction.CYCLE_COUNT,
+          [TaskType.STOCK_VERIFY]: InventoryAction.CYCLE_COUNT,
+          [TaskType.RECEIVE]: InventoryAction.RECEIVE,
+          [TaskType.PICK]: InventoryAction.SHIP,
+          [TaskType.SHIP]: InventoryAction.SHIP,
+          [TaskType.TRANSFER]: InventoryAction.TRANSFER,
+          [TaskType.DAMAGE_INSPECTION]: InventoryAction.DAMAGE,
+        };
+        const expectedAction = expectedActionByTask[task.type];
+        if (!expectedAction || input.action !== expectedAction) {
+          throw new BadRequestException(
+            "The inventory action does not match the assigned task.",
+          );
+        }
+
+        const expectedSourceLocationId =
+          task.sourceLocationId ??
+          (task.type === TaskType.RECEIVE ? null : task.locationId);
+        const expectedDestinationLocationId =
+          task.destinationLocationId ??
+          (task.type === TaskType.RECEIVE ? task.locationId : null);
+        if (
+          expectedSourceLocationId &&
+          input.sourceLocationId !== expectedSourceLocationId
+        ) {
+          throw new BadRequestException(
+            "The source location does not match the assigned task.",
+          );
+        }
+        if (
+          expectedDestinationLocationId &&
+          input.destinationLocationId !== expectedDestinationLocationId
+        ) {
+          throw new BadRequestException(
+            "The destination location does not match the assigned task.",
+          );
+        }
+
+        await database.inventoryTransaction.update({
+          where: { id: transaction.id },
+          data: { taskId: task.id },
+        });
       }
       if (input.evidenceId) {
         await database.voiceEvidence.update({
@@ -707,14 +695,6 @@ export class InventoryService {
       return this.confirmCycleCount(transaction, id, user);
     }
 
-    // A Ship transaction created from an assigned reservation shipment task
-    // posts through the reservation-aware movement: on-hand AND reserved both
-    // decrease, the reservation advances towards fulfilled, the task is
-    // completed and audit + notification records are written atomically.
-    if (transaction.task?.type === TaskType.SHIP && transaction.task?.reservationId) {
-      return this.reservations.confirmShipmentTransaction(id, actor);
-    }
-
     // Only Cycle Count and Damage can require manager review. The extended
     // evaluator adds risk reasons to those actions; it does not escalate a
     // normal Receive, Ship or Transfer movement.
@@ -723,17 +703,28 @@ export class InventoryService {
       this.rules.requiresManagerReview(transaction.action) ||
       extendedReview.requiresReview
     ) {
-      const pendingReview = await this.prisma.inventoryTransaction.update({
-        where: { id },
-        data: {
-          confirmedAt: transaction.confirmedAt ?? new Date(),
-          // Record why the transaction is being held for manager review.
-          // Preserve the original reasons on an idempotent re-confirm.
-          reviewReasons:
-            transaction.reviewReasons ??
-            (extendedReview.reasons.join("\n") || null),
-        },
-        include: transactionInclude,
+      const pendingReview = await this.prisma.$transaction(async (database) => {
+        if (transaction.taskId) {
+          await database.inventoryTask.updateMany({
+            where: {
+              id: transaction.taskId,
+              status: { in: [TaskStatus.OPEN, TaskStatus.IN_PROGRESS] },
+            },
+            data: { status: TaskStatus.COMPLETED, completedAt: new Date() },
+          });
+        }
+        return database.inventoryTransaction.update({
+          where: { id },
+          data: {
+            confirmedAt: transaction.confirmedAt ?? new Date(),
+            // Record why the transaction is being held for manager review.
+            // Preserve the original reasons on an idempotent re-confirm.
+            reviewReasons:
+              transaction.reviewReasons ??
+              (extendedReview.reasons.join("\n") || null),
+          },
+          include: transactionInclude,
+        });
       });
       return {
         outcome: "PENDING_REVIEW",
@@ -763,7 +754,7 @@ export class InventoryService {
             this.getAffectedLocationIds(current),
           );
 
-          return database.inventoryTransaction.update({
+          const postedTransaction = await database.inventoryTransaction.update({
             where: { id },
             data: {
               status: TransactionStatus.POSTED,
@@ -772,6 +763,16 @@ export class InventoryService {
               systemQuantityAfter: movement.primaryQuantityAfter,
             },
           });
+          if (current.taskId) {
+            await database.inventoryTask.updateMany({
+              where: {
+                id: current.taskId,
+                status: { in: [TaskStatus.OPEN, TaskStatus.IN_PROGRESS] },
+              },
+              data: { status: TaskStatus.COMPLETED, completedAt: new Date() },
+            });
+          }
+          return postedTransaction;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
@@ -841,7 +842,7 @@ export class InventoryService {
           locationId: transaction.sourceLocationId,
         },
       },
-      select: { quantity: true, reservedQuantity: true },
+      select: { quantity: true },
     });
     const expectedQuantity = balance?.quantity ?? 0;
     const controlled = transaction.product?.controlled ?? false;
@@ -861,6 +862,21 @@ export class InventoryService {
         expectedQuantity,
         evaluation,
       );
+    }
+
+    // Guard: if this cycle count is linked to a task that has already been
+    // completed (e.g. the worker confirmed a previous count for the same
+    // task), reject the duplicate so only the first transaction posts.
+    if (transaction.taskId) {
+      const linkedTask = await this.prisma.inventoryTask.findUnique({
+        where: { id: transaction.taskId },
+        select: { status: true },
+      });
+      if (linkedTask?.status === TaskStatus.COMPLETED) {
+        throw new ConflictException(
+          "This task has already been completed by a previous cycle count. No further counts are accepted.",
+        );
+      }
     }
 
     // Matching count completes normally — posted directly, no discrepancy.
@@ -1198,10 +1214,7 @@ export class InventoryService {
         },
       },
     });
-    this.rules.assertCycleCountAllowed(
-      transaction.quantity,
-      balance?.reservedQuantity ?? 0,
-    );
+    this.rules.assertCycleCountAllowed(transaction.quantity);
     await database.inventoryBalance.upsert({
       where: {
         productId_locationId: {
@@ -1262,7 +1275,17 @@ export class InventoryService {
     if (!transaction) throw new NotFoundException("Transaction not found.");
     if (transaction.status === TransactionStatus.POSTED) {
       return { outcome: "POSTED", idempotent: true, transaction };
-    }      await this.assertManagerReviewable(transaction);
+    }
+    const damageAdjustmentReason = input.note?.trim() ?? "";
+    if (
+      transaction.action === InventoryAction.DAMAGE &&
+      !damageAdjustmentReason
+    ) {
+      throw new BadRequestException(
+        "An adjustment reason is required before damaged stock can be posted.",
+      );
+    }
+    await this.assertManagerReviewable(transaction);
 
     try {
       const posted = await this.prisma.$transaction(
@@ -1273,6 +1296,14 @@ export class InventoryService {
           });
           if (!current) throw new NotFoundException("Transaction not found.");
           if (current.status === TransactionStatus.POSTED) return current;
+          if (
+            current.action === InventoryAction.DAMAGE &&
+            !damageAdjustmentReason
+          ) {
+            throw new BadRequestException(
+              "An adjustment reason is required before damaged stock can be posted.",
+            );
+          }
           await this.assertManagerReviewable(current, database);
 
           const movement = await this.applyManagerApprovedMovement(
@@ -1291,7 +1322,16 @@ export class InventoryService {
               approvedById: manager.id,
               approvedAt: new Date(),
               postedAt: new Date(),
-              reviewNotes: input.note?.trim() || null,
+              reviewNotes: damageAdjustmentReason || null,
+              notes:
+                current.action === InventoryAction.DAMAGE
+                  ? [
+                      current.notes?.trim(),
+                      `Adjustment Reason: ${damageAdjustmentReason}`,
+                    ]
+                      .filter(Boolean)
+                      .join("\n")
+                  : current.notes,
               systemQuantityAfter: movement?.primaryQuantityAfter ?? null,
             },
           });
@@ -1398,6 +1438,17 @@ export class InventoryService {
     input: ReviewTransactionDto,
     actor: AuthenticatedUser,
   ) {
+    this.assertManagerAccess(actor);
+    const transaction = await this.prisma.inventoryTransaction.findUnique({
+      where: { id },
+      include: transactionInclude,
+    });
+    if (!transaction) throw new NotFoundException("Transaction not found.");
+    if (transaction.action === InventoryAction.DAMAGE) {
+      throw new BadRequestException(
+        "Damage transactions cannot be sent for recount. Approve with an adjustment reason or reject the transaction.",
+      );
+    }
     const result = await this.recordManagerDecision(
       id,
       TransactionStatus.RECOUNT_REQUESTED,
@@ -1510,7 +1561,7 @@ export class InventoryService {
                 locationId: transaction.sourceLocationId,
               },
             },
-            select: { quantity: true, reservedQuantity: true },
+            select: { quantity: true },
           })
         : Promise.resolve(null),
     ]);
@@ -1525,7 +1576,7 @@ export class InventoryService {
       availableStock:
         balance === null
           ? undefined
-          : Math.max(0, balance.quantity - balance.reservedQuantity),
+          : Math.max(0, balance.quantity),
       recentTransactions,
       recentCorrections,
     });
@@ -1719,7 +1770,6 @@ export class InventoryService {
         active: true,
         safetyStock: true,
         reorderQuantity: true,
-        supplier: { select: { minimumOrderQuantity: true } },
       },
     });
     if (!product) throw new NotFoundException("Product not found.");
@@ -1731,21 +1781,13 @@ export class InventoryService {
       database.reorderDraft.findUnique({ where: { activeKey } }),
     ]);
     const onHand = balances.reduce((sum, balance) => sum + balance.quantity, 0);
-    const reserved = balances.reduce(
-      (sum, balance) => sum + balance.reservedQuantity,
-      0,
-    );
     const reorder = this.rules.evaluateReorder(
       onHand,
-      reserved,
       product.safetyStock,
       product.reorderQuantity,
     );
     const { available, lowStock } = reorder;
-    const suggestedQuantity = Math.max(
-      reorder.suggestedQuantity,
-      product.supplier?.minimumOrderQuantity ?? 0,
-    );
+    const suggestedQuantity = reorder.suggestedQuantity;
 
     // Purchase Items is a product-level list. Retire older location-level
     // drafts so one SKU can never appear more than once.
@@ -1823,7 +1865,6 @@ export class InventoryService {
     this.rules.assertAvailableStock(
       quantity,
       balance?.quantity ?? 0,
-      balance?.reservedQuantity ?? 0,
     );
 
     return database.inventoryBalance.update({

@@ -138,18 +138,12 @@ export class InventoryRulesEngine {
     return this.reviewActions.has(action);
   }
 
-  assertAvailableStock(requested: number, quantity: number, reservedQuantity = 0) {
-    const available = Math.max(0, quantity - reservedQuantity);
+  assertAvailableStock(requested: number, quantity: number) {
+    const available = Math.max(0, quantity);
     if (available < requested) {
       throw new ConflictException(`Insufficient available stock. Requested ${requested}; available ${available}.`);
     }
     return available;
-  }
-
-  assertCycleCountAllowed(countedQuantity: number, reservedQuantity: number) {
-    if (countedQuantity < reservedQuantity) {
-      throw new ConflictException("The physical count is below the reserved quantity. Resolve reservations before approval.");
-    }
   }
 
   evaluateDiscrepancy(systemQuantity: number, countedQuantity: number) {
@@ -166,8 +160,8 @@ export class InventoryRulesEngine {
     };
   }
 
-  evaluateReorder(quantity: number, reservedQuantity: number, safetyStock: number, reorderQuantity: number): ReorderDecision {
-    const available = quantity - reservedQuantity;
+  evaluateReorder(quantity: number, safetyStock: number, reorderQuantity: number): ReorderDecision {
+    const available = quantity;
     const lowStock = safetyStock > 0 && available < safetyStock;
     return {
       lowStock,

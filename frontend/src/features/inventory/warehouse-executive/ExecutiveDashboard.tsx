@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from "react";
 import { AlertTriangle, ArrowDownToLine, ArrowRightLeft, BellRing, Boxes, Camera, CheckCircle2, ChevronDown, ClipboardCheck, Clock3, FileClock, ImagePlus, LayoutDashboard, Mic, PackageMinus, RefreshCcw, Settings, ShieldCheck, Sparkles, Trash2, Volume2, X } from "lucide-react";
-import { mapTransactions, fetchInventorySnapshot, fetchInventoryTasks, startInventoryTask, completeInventoryTask, cancelInventoryTransaction, createPendingInventoryTransaction, confirmInventoryTransaction, extractInventoryDetails, transcribeAudio, uploadTransactionEvidence, type ApiProduct, type ApiLocation, type ApiTransaction, type ApiInventoryTask, type InventoryExtraction, type InventorySnapshot, type SpeechTranscription } from "../api/inventory-api";
+import { mapTransactions, fetchInventorySnapshot, fetchInventoryTasks, startInventoryTask, completeInventoryTask, cancelInventoryTransaction, createPendingInventoryTransaction, confirmInventoryTransaction, extractInventoryDetails, transcribeAudio, uploadTransactionEvidence, type ApiProduct, type ApiLocation, type ApiTransaction, type ApiInventoryTask, type InventoryExtraction, type InventorySnapshot, type SpeechTranscription, type InventoryExtractionContext } from "../api/inventory-api";
 import { enqueueOfflineInventoryUpdate } from "../offline/offline-queue";
 import { getAuthenticatedDisplayName, keycloak } from "../auth/keycloak";
 import type { VoiceState } from "../types";
@@ -88,6 +88,7 @@ export function ExecutiveDashboard({
   const [clockNow, setClockNow] = useState(() => new Date());
   const [historyRange, setHistoryRange] = useState<"WEEK" | "ALL">("WEEK");
   const [historyView, setHistoryView] = useState<"PENDING" | "COMPLETED">("PENDING");
+  const [voiceOrigin, setVoiceOrigin] = useState<"home" | "task-queue">("home");
   const [selectedWorkflow, setSelectedWorkflow] =
     useState<ExecutiveVoiceWorkflow | null>(null);
   const [transcript, setTranscript] = useState("");
@@ -98,6 +99,9 @@ export function ExecutiveDashboard({
     useState<SpeechTranscription | null>(null);
   const [extraction, setExtraction] =
     useState<InventoryExtraction | null>(null);
+  const [extractionDurationMs, setExtractionDurationMs] = useState<number | null>(
+    null,
+  );
   const [clarificationState, setClarificationState] = useState<
     "idle" | "recording" | "transcribing" | "processing"
   >("idle");
@@ -130,6 +134,42 @@ export function ExecutiveDashboard({
   const clientRequestIdRef = useRef<string | null>(null);
   const activeClarificationQuestion =
     extraction?.clarificationQuestions[0] ?? "";
+
+  function buildTaskExtractionContext(): InventoryExtractionContext | undefined {
+    if (!activeVoiceTask) return undefined;
+
+    const mappedAction =
+      activeVoiceTask.type === "RECOUNT" ||
+      activeVoiceTask.type === "STOCK_VERIFY"
+        ? "CYCLE_COUNT"
+        : activeVoiceTask.type === "PICK"
+          ? "SHIP"
+          : ["RECEIVE", "SHIP", "TRANSFER", "CYCLE_COUNT", "DAMAGE"].includes(
+                activeVoiceTask.type,
+            )
+            ? (activeVoiceTask.type as InventoryExtractionContext["action"])
+            : activeVoiceTask.type === "DAMAGE_INSPECTION"
+              ? "DAMAGE"
+              : undefined;
+
+    if (!mappedAction) return undefined;
+
+    return {
+      action: mappedAction,
+      productSku: activeVoiceTask.product?.sku,
+      productName: activeVoiceTask.product?.name,
+      sourceLocationCode:
+        mappedAction === "RECEIVE"
+          ? undefined
+          : activeVoiceTask.sourceLocation?.code ??
+            activeVoiceTask.location?.code,
+      destinationLocationCode:
+        mappedAction === "RECEIVE"
+          ? activeVoiceTask.destinationLocation?.code ??
+            activeVoiceTask.location?.code
+          : activeVoiceTask.destinationLocation?.code,
+    };
+  }
 
   useEffect(() => {
     let active = true;
@@ -196,6 +236,18 @@ export function ExecutiveDashboard({
     const timer = window.setInterval(() => setClockNow(new Date()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  // After a successful confirmation, navigate back to the page the worker
+  // came from (Home or Task queue) so they don't stay on the Voice Entry
+  // screen indefinitely.
+  useEffect(() => {
+    if (submissionState !== "complete") return;
+    const redirectTimer = window.setTimeout(() => {
+      onNavigate(voiceOrigin === "task-queue" ? "Task queue" : "Home");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }, 2500);
+    return () => window.clearTimeout(redirectTimer);
+  }, [submissionState, voiceOrigin, onNavigate]);
 
   /** Re-fetch tasks and the inventory snapshot from the refresh/error banner. */
   async function refreshWorkerQueue() {
@@ -269,6 +321,7 @@ export function ExecutiveDashboard({
 
   function startWorkflowFromHome(workflow: ExecutiveVoiceWorkflow) {
     resetVoice();
+    setVoiceOrigin("home");
     setSelectedWorkflow(workflow);
     setMessage(
       "Ready. Tap the microphone and say one short sentence using the selected action.",
@@ -466,9 +519,11 @@ export function ExecutiveDashboard({
     setLiveTranscript("");
     setLiveTranscriptSupported(false);
     setVoiceState("idle");
+    setVoiceOrigin("home");
     setTranscript("");
     setTranscription(null);
     setExtraction(null);
+    setExtractionDurationMs(null);
     setClarificationState("idle");
     setClarificationHistory([]);
     setSubmissionState("idle");
@@ -525,13 +580,32 @@ export function ExecutiveDashboard({
   ) {
     if (!question || !("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
-    const spokenQuestion = question === "Which inventory action did you perform?"
+    const spokenQuestion =
+      question === "Which inventory action did you perform?" ||
+      question === "What did you do?"
       ? `${question} Please say receive, ship, transfer, cycle count, or damage.`
       : question;
     window.speechSynthesis.speak(createGuidanceUtterance(spokenQuestion));
   }
 
-  function applyActiveTaskContext(result: InventoryExtraction) {
+  function parseQuantityOnlyTaskAnswer(value: string) {
+    const normalized = value
+      .trim()
+      .replace(/^[\s"'“”]+|[\s"'“”]+$/g, "")
+      .replace(/[.,?!]+$/g, "")
+      .trim();
+    const match = normalized.match(
+      /^(\d{1,6})(?:\s+(?:units?|pieces?|boxes?|rolls?|pairs?|packs?|cartons?))?$/i,
+    );
+    if (!match) return null;
+    const quantity = Number(match[1]);
+    return Number.isSafeInteger(quantity) ? quantity : null;
+  }
+
+  function applyActiveTaskContext(
+    result: InventoryExtraction,
+    spokenTranscript = result.transcript,
+  ) {
     if (!activeVoiceTask) return result;
 
     const taskAction: NonNullable<InventoryExtraction["fields"]["action"]> =
@@ -550,10 +624,19 @@ export function ExecutiveDashboard({
     // than the task quantity). The spoken quantity wins when the AI extracted
     // one; the task quantity is only the fallback so a confident statement is
     // never overwritten and a missing one never blocks confirmation.
+    // Always prefer the quantity just spoken by the executive. The assigned
+    // task quantity is only a fallback for workflows where the task already
+    // contains a planned quantity. This is especially important after a
+    // clarification such as “One hundred” for a cycle count: the answer must
+    // update the extraction card instead of being overwritten by the task.
+    const spokenTaskQuantity = parseQuantityOnlyTaskAnswer(spokenTranscript);
     const quantity =
-      activeVoiceTask.type === "SHIP"
-        ? (result.fields.quantity ?? activeVoiceTask.quantity ?? null)
-        : activeVoiceTask.quantity ?? result.fields.quantity;
+      result.fields.quantity ??
+      (["CYCLE_COUNT", "RECOUNT", "STOCK_VERIFY"].includes(
+        activeVoiceTask.type,
+      )
+        ? spokenTaskQuantity
+        : activeVoiceTask.quantity ?? null);
     const sourceLocation =
       taskAction === "RECEIVE"
         ? result.fields.sourceLocation
@@ -566,8 +649,11 @@ export function ExecutiveDashboard({
         : activeVoiceTask.destinationLocation ?? result.fields.destinationLocation;
     const trustedFields = new Set<string>(["action"]);
     if (activeVoiceTask.product) trustedFields.add("product");
+    if (spokenTaskQuantity !== null) trustedFields.add("quantity");
     if (
-      activeVoiceTask.type !== "SHIP" &&
+      !["SHIP", "CYCLE_COUNT", "RECOUNT", "STOCK_VERIFY"].includes(
+        activeVoiceTask.type,
+      ) &&
       activeVoiceTask.quantity !== null &&
       activeVoiceTask.quantity !== undefined
     ) {
@@ -598,23 +684,21 @@ export function ExecutiveDashboard({
       ...new Set([...missingFields, ...lowConfidenceFields]),
     ];
     const questions: Record<string, string> = {
-      action: "Which inventory action did you perform?",
-      product: "Which item does this update apply to?",
-      quantity: "What quantity should be recorded?",
-      sourceLocation: "Which location did the stock come from?",
-      destinationLocation: "Where did you place the received stock?",
+      action: "What did you do?",
+      product: "Which item?",
+      quantity: "How many?",
+      sourceLocation: "Where did it come from?",
+      destinationLocation: "Where should it go?",
     };
     const fieldConfidence = {
       ...result.fieldConfidence,
       action: 1,
       product: activeVoiceTask.product ? 1 : result.fieldConfidence.product,
       quantity:
-        activeVoiceTask.type === "SHIP"
-          ? result.fields.quantity !== null && result.fields.quantity !== undefined
-            ? result.fieldConfidence.quantity
-            : activeVoiceTask.quantity !== null && activeVoiceTask.quantity !== undefined
-              ? 1
-              : result.fieldConfidence.quantity
+        result.fields.quantity !== null && result.fields.quantity !== undefined
+          ? result.fieldConfidence.quantity
+          : spokenTaskQuantity !== null
+            ? 1
           : activeVoiceTask.quantity !== null && activeVoiceTask.quantity !== undefined
             ? 1
             : result.fieldConfidence.quantity,
@@ -642,7 +726,17 @@ export function ExecutiveDashboard({
     return {
       ...result,
       readyForConfirmation: fieldsNeedingClarification.length === 0,
-      requiresManagerReview: ["CYCLE_COUNT", "DAMAGE"].includes(taskAction),
+      requiresManagerReview: taskAction === "DAMAGE"
+        ? true
+        : taskAction === "CYCLE_COUNT"
+          ? (() => {
+              if (!product || !sourceLocation) return true;
+              const balance = snapshot?.balances.find(
+                (b) => b.product.id === product.id && b.location.id === sourceLocation.id,
+              );
+              return balance ? balance.quantity !== quantity : true;
+            })()
+          : false,
       confidence: Number(
         (
           requiredConfidence.reduce((sum, value) => sum + value, 0) /
@@ -689,18 +783,26 @@ export function ExecutiveDashboard({
     );
     const unresolved = [...new Set([...missingFields, ...lowConfidenceFields])];
     const questions: Record<string, string> = {
-      product: "Which item does this update apply to?",
-      quantity: "What quantity should be recorded?",
-      sourceLocation: "Which location did the stock come from?",
-      destinationLocation: "Where did you place the received stock?",
+      product: "Which item?",
+      quantity: "How many?",
+      sourceLocation: "Where did it come from?",
+      destinationLocation: "Where should it go?",
     };
 
     return {
       ...result,
       readyForConfirmation: unresolved.length === 0,
-      requiresManagerReview: ["CYCLE_COUNT", "DAMAGE"].includes(
-        selectedAction,
-      ),
+      requiresManagerReview: selectedAction === "DAMAGE"
+        ? true
+        : selectedAction === "CYCLE_COUNT"
+          ? (() => {
+              if (!result.fields.product || !result.fields.sourceLocation) return true;
+              const balance = snapshot?.balances.find(
+                (b) => b.product.id === result.fields.product?.id && b.location.id === result.fields.sourceLocation?.id,
+              );
+              return balance ? balance.quantity !== result.fields.quantity : true;
+            })()
+          : false,
       missingFields,
       lowConfidenceFields,
       clarificationQuestions: unresolved.map((field) => questions[field]),
@@ -714,15 +816,20 @@ export function ExecutiveDashboard({
     evidenceId = transcription?.evidenceId,
   ) {
     setVoiceState("extracting");
+    setExtractionDurationMs(null);
     setMessage("");
+    const extractionStartedAt = performance.now();
     try {
       const workflowHints = { RECEIVE: "RECEIVE", SHIP: "SHIP", TRANSFER: "TRANSFER", CYCLE_COUNT: "CYCLE COUNT", DAMAGE: "DAMAGE" };
       const extractedResult = await extractInventoryDetails({
         transcript: selectedWorkflow ? `Selected workflow: ${workflowHints[selectedWorkflow]}. Worker statement: ${reviewedTranscript}` : reviewedTranscript,
         evidenceId,
+        context: buildTaskExtractionContext(),
       });
+      setExtractionDurationMs(performance.now() - extractionStartedAt);
       const result = applyActiveTaskContext(
         applySelectedWorkflowContext(extractedResult),
+        reviewedTranscript,
       );
       setExtraction(result);
       setVoiceState("extracted");
@@ -735,6 +842,7 @@ export function ExecutiveDashboard({
           : "The AI needs more information before this can be confirmed.",
       );
     } catch {
+      setExtractionDurationMs(null);
       setVoiceState("review");
       setMessage(
         "AI extraction was not available. Check Ollama and try again.",
@@ -792,26 +900,18 @@ export function ExecutiveDashboard({
           activeVoiceTask?.type === "RECOUNT" && activeVoiceTask.source === "ASSIGNED"
             ? activeVoiceTask.id
             : undefined;
-        // A reservation shipment task links its Ship transaction to the task so
-        // the backend applies the reservation-aware movement (on-hand AND
-        // reserved decrease together) instead of a plain Ship.
-        const shipmentTaskId =
-          activeVoiceTask?.type === "SHIP" && activeVoiceTask.source === "ASSIGNED"
-            ? activeVoiceTask.id
-            : undefined;
-        // A Month-End Cycle Count task links its count transaction to the task
-        // (the item and location already come from the task). The backend then
-        // completes the task atomically when the count is confirmed.
-        const cycleCountTaskId =
-          activeVoiceTask?.type === "CYCLE_COUNT" && activeVoiceTask.source === "ASSIGNED"
+        // Every assigned task is linked to the inventory transaction. The
+        // backend validates the protected task details and completes the task
+        // in the same database operation that posts or submits the result.
+        const assignedTaskId =
+          activeVoiceTask?.source === "ASSIGNED" && activeVoiceTask.type !== "RECOUNT"
             ? activeVoiceTask.id
             : undefined;
         transaction = await createPendingInventoryTransaction(
           extraction,
           clientRequestIdRef.current,
           recountTaskId,
-          shipmentTaskId,
-          cycleCountTaskId,
+          assignedTaskId,
         );
         setSubmittedTransaction(transaction);
       }
@@ -824,29 +924,16 @@ export function ExecutiveDashboard({
       let taskCompletionMessage = "";
       if (activeVoiceTask) {
         if (activeVoiceTask.source === "ASSIGNED") {
-          if (["RECOUNT", "SHIP", "CYCLE_COUNT"].includes(activeVoiceTask.type)) {
-            // The backend completes the linked task atomically while
-            // confirming the result (a matching recount posts and closes the
-            // case; a shipment posts and advances the reservation; a
-            // month-end cycle count posts or routes to review), so the worker
-            // queue is refreshed here instead of completing the task a second
-            // time.
-            try {
-              setAssignedTasks(await fetchInventoryTasks());
-              taskCompletionMessage = ` Task “${activeVoiceTask.title}” is now complete.`;
-              setActiveVoiceTask(null);
-            } catch {
-              taskCompletionMessage = " The inventory update was saved, but the task queue could not be refreshed. Reload the page to confirm the task is complete.";
-            }
-          } else {
-            try {
-              await completeInventoryTask(activeVoiceTask.id);
-              setAssignedTasks(await fetchInventoryTasks());
-              taskCompletionMessage = ` Task “${activeVoiceTask.title}” is now complete.`;
-              setActiveVoiceTask(null);
-            } catch {
-              taskCompletionMessage = " The inventory update was saved, but the task remains in progress and can be completed after the task service reconnects.";
-            }
+          // Confirmation now posts/submits the transaction and completes its
+          // linked task atomically. Only refresh the queue here; never issue a
+          // second completion request that can leave the two records out of
+          // sync.
+          try {
+            setAssignedTasks(await fetchInventoryTasks());
+            taskCompletionMessage = ` Task “${activeVoiceTask.title}” is now complete.`;
+            setActiveVoiceTask(null);
+          } catch {
+            taskCompletionMessage = " The inventory update was saved, but the task queue could not be refreshed. Reload the page to confirm the task is complete.";
           }
         } else {
           taskCompletionMessage = " The requested recount was submitted and will remain visible until the manager reviews it.";
@@ -971,6 +1058,8 @@ export function ExecutiveDashboard({
       }
 
       setClarificationState("processing");
+      setExtractionDurationMs(null);
+      const extractionStartedAt = performance.now();
       const targetField =
         extraction?.missingFields[0] ??
         extraction?.lowConfidenceFields[0] ??
@@ -979,9 +1068,12 @@ export function ExecutiveDashboard({
       const refinedResult = await extractInventoryDetails({
         transcript: `${contextTranscript}\nClarification answer to "${question}": ${spokenAnswer}.`,
         evidenceId: transcription?.evidenceId,
+        context: buildTaskExtractionContext(),
       });
+      setExtractionDurationMs(performance.now() - extractionStartedAt);
       const refined = applyActiveTaskContext(
         applySelectedWorkflowContext(refinedResult),
+        spokenAnswer,
       );
       const unresolvedFields = new Set([
         ...refined.missingFields,
@@ -1208,6 +1300,10 @@ export function ExecutiveDashboard({
       const refreshedTasks = await fetchInventoryTasks();
       setAssignedTasks(refreshedTasks);
       const refreshedTask = refreshedTasks.find((candidate) => candidate.id === taskId) ?? task;
+      if (refreshedTask.status === "COMPLETED" || refreshedTask.status === "CANCELLED") {
+        setMessage("This task has already been completed. Refresh the page to see your updated queue.");
+        return;
+      }
       setActiveVoiceTask({
         id: refreshedTask.id,
         title: refreshedTask.title,
@@ -1223,6 +1319,7 @@ export function ExecutiveDashboard({
         source: "ASSIGNED",
       });
       resetVoice();
+      setVoiceOrigin("task-queue");
       setSelectedWorkflow(taskWorkflow(task.type));
       setMessage(task.type === "TRANSFER"
         ? `Transfer task loaded. Confirm the assigned move from ${refreshedTask.sourceLocation?.name ?? "the source"} to ${refreshedTask.destinationLocation?.name ?? "the destination"} by voice.`
@@ -1395,7 +1492,11 @@ export function ExecutiveDashboard({
       return;
     }
     window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(createGuidanceUtterance("Inventory Management voice guidance is working. Which inventory action did you perform?"));
+    window.speechSynthesis.speak(
+      createGuidanceUtterance(
+        "Inventory Management voice guidance is working. What did you do?",
+      ),
+    );
     setSpeakerStatus("Test message played");
   }
 
@@ -1739,6 +1840,17 @@ export function ExecutiveDashboard({
                   </div>
                   <p className="mt-5 text-sm font-extrabold text-[#3f3470]">Qwen is extracting inventory details…</p>
                   <p className="mt-1 text-xs text-[#8379aa]">Products and locations are checked against approved database records.</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetVoice();
+                      onNavigate(voiceOrigin === "task-queue" ? "Task queue" : "Home");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="mt-5 rounded-xl border border-[#c9b8f0] bg-white px-5 py-3 text-sm font-extrabold text-[#5a46b0] shadow-[0_8px_20px_rgba(114,87,214,0.1)] transition hover:bg-[#f5f0ff]"
+                  >
+                    Cancel extraction
+                  </button>
                 </div>
               </div>
             )}
@@ -1759,7 +1871,7 @@ export function ExecutiveDashboard({
                     <p className="mt-2 text-sm font-semibold leading-6 text-[#29466f]">“{transcript}”</p>
                   )}
                 </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
                   {[
                     ["Language", transcription?.language?.toUpperCase() ?? "—"],
                     [
@@ -1771,6 +1883,12 @@ export function ExecutiveDashboard({
                     [
                       "Audio duration",
                       transcription ? `${transcription.duration.toFixed(1)} sec` : "—",
+                    ],
+                    [
+                      "AI extraction time",
+                      extractionDurationMs !== null
+                        ? `${(extractionDurationMs / 1000).toFixed(2)} sec`
+                        : "—",
                     ],
                   ].map(([label, value]) => (
                     <div key={label} className="rounded-xl border border-[#e3eaf3] px-4 py-3">

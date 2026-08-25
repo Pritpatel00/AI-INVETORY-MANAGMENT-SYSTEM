@@ -20,7 +20,8 @@ export interface InventoryTransaction {
     | "Pending"
     | "Rejected"
     | "Cancelled"
-    | "Recount requested";
+    | "Recount requested"
+    | "Awaiting review";
 }
 
 export interface LowStockItem {

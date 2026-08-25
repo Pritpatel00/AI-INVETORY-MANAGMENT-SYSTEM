@@ -12,7 +12,10 @@ import { z } from "zod";
 
 import type { AuthenticatedUser } from "../auth/auth-user";
 import { PrismaService } from "../prisma/prisma.service";
-import { ExtractInventoryDto } from "./dto/extract-inventory.dto";
+import {
+  ExtractInventoryContextDto,
+  ExtractInventoryDto,
+} from "./dto/extract-inventory.dto";
 import { LocationResolverService } from "../inventory/location-resolver.service";
 
 const actionValues = [
@@ -120,17 +123,18 @@ export class AiService {
   private readonly ollamaModel = process.env.OLLAMA_MODEL ?? "qwen3:4b";
   // How long Ollama keeps the model loaded after a request. A short value
   // causes a cold model reload on the next extraction, which is the most
-  // common cause of slow AI responses. Set to "-1" to keep it loaded forever.
+  // common cause of slow AI responses. Use a valid Ollama duration such as
+  // "30m" to keep it warm between warehouse commands.
   private readonly ollamaKeepAlive =
     process.env.OLLAMA_KEEP_ALIVE ?? "30m";
   // The extraction JSON is small, so capping output tokens avoids wasting time
   // on a long tail. The structured-output schema already bounds the answer, and
   // the default leaves comfortable headroom for the free-text notes field.
-  private readonly ollamaNumPredict = envNumber("OLLAMA_NUM_PREDICT", 768);
+  private readonly ollamaNumPredict = envNumber("OLLAMA_NUM_PREDICT", 256);
   // Bounds the context window (Qwen3's native context can be 32k tokens), which
   // reduces memory and speeds up generation on CPU while fitting the catalog
   // prompt easily.
-  private readonly ollamaNumCtx = envNumber("OLLAMA_NUM_CTX", 8192);
+  private readonly ollamaNumCtx = envNumber("OLLAMA_NUM_CTX", 2048);
   // Optional CPU thread count; Ollama decides automatically when unset.
   private readonly ollamaNumThreads =
     envNumber("OLLAMA_NUM_THREADS", 0) || undefined;
@@ -178,6 +182,55 @@ export class AiService {
       }),
     ]);
 
+    // Assigned task details are trusted context. The worker should not have to
+    // repeat the action, item, SKU, or location when answering a clarification.
+    const contextAction = input.context?.action
+      ? (input.context.action as InventoryAction)
+      : null;
+    const contextProduct = input.context
+      ? (products.find(
+          (product) =>
+            (input.context?.productSku &&
+              product.sku.toLowerCase() ===
+                input.context.productSku.toLowerCase()) ||
+            (input.context?.productName &&
+              this.normalize(product.name) ===
+                this.normalize(input.context.productName)),
+        ) ?? null)
+      : null;
+    const contextSourceLocation = input.context?.sourceLocationCode
+      ? (locations.find(
+          (location) =>
+            location.code.toLowerCase() ===
+            input.context!.sourceLocationCode!.toLowerCase(),
+        ) ?? null)
+      : null;
+    const contextDestinationLocation = input.context?.destinationLocationCode
+      ? (locations.find(
+          (location) =>
+            location.code.toLowerCase() ===
+            input.context!.destinationLocationCode!.toLowerCase(),
+        ) ?? null)
+      : null;
+
+    const fastExtraction = await this.tryDeterministicExtraction(
+      transcript,
+      input.evidenceId,
+      user.id,
+      products,
+      locations,
+      input.context,
+    );
+    if (fastExtraction) {
+      if (input.evidenceId) {
+        await this.prisma.voiceEvidence.update({
+          where: { id: input.evidenceId },
+          data: { transcript },
+        });
+      }
+      return fastExtraction;
+    }
+
     const prompt = [
       "Extract one warehouse inventory transaction from the transcript.",
       "Use only the products and locations listed below.",
@@ -197,7 +250,13 @@ export class AiService {
       "For RECEIVE, the worker must say the actual destination location. If it is missing, leave destinationLocationCode empty so the system asks for it.",
       "For CYCLE_COUNT and DAMAGE, if the worker does not say a location, leave sourceLocationCode empty — the backend will use the worker's assigned zone.",
       "For SHIP, if the worker does not say a location, the backend will check the worker's zone for stock — leave sourceLocationCode empty.",
-      "A supplier or order number belongs in referenceNumber.",
+      ...(input.context
+        ? [
+            "Assigned task context is authoritative. Do not ask the worker to repeat any assigned action, item, SKU, or location.",
+            `Assigned task context: ${JSON.stringify(input.context)}`,
+          ]
+        : []),
+      "An order or business reference belongs in referenceNumber.",
       "Return only data matching the supplied JSON schema.",
       `Products: ${JSON.stringify(products.map(({ sku, name, unit }) => ({ sku, name, unit })))}`,
       `Locations: ${JSON.stringify(locations.map(({ code, name }) => ({ code, name })))}`,
@@ -263,6 +322,40 @@ export class AiService {
       );
     }
 
+    // A clarification reply is often only a number (for example, "100").
+    // Do not make the model infer the quantity again from that short answer:
+    // the question already establishes that the answer is the quantity.
+    const clarifiedQuantity = this.extractClarificationQuantity(transcript);
+    const contextQuantity =
+      input.context &&
+      !/\b(?:order|reference|purchase order|po number|because|notes?)\b/i.test(
+        transcript,
+      )
+        ? this.parseQuantityWords(
+            transcript
+              .toLowerCase()
+              .replace(/[.,?!]+/g, "")
+              .replace(
+                /\b(?:units?|pieces?|boxes?|rolls?|pairs?|packs?|cartons?)\b$/,
+                "",
+              )
+              .trim()
+              .split(/\s+/)
+              .filter(Boolean),
+          )
+        : null;
+    if (clarifiedQuantity !== null) {
+      rawExtraction.quantity = clarifiedQuantity;
+      rawExtraction.quantityKnown = true;
+      rawExtraction.fieldConfidence.quantity = 1;
+    } else if (contextQuantity !== null) {
+      // In an assigned task, a short answer such as “100” is the missing
+      // quantity. Do not ask the worker for the same quantity again.
+      rawExtraction.quantity = contextQuantity;
+      rawExtraction.quantityKnown = true;
+      rawExtraction.fieldConfidence.quantity = 1;
+    }
+
     const clarifiedFields = this.findClarifiedFields(transcript);
     const clarifiedAction = this.inferActionFromClarification(transcript);
     const clarifiedSourceLocation = this.inferLocationFromClarification(
@@ -272,24 +365,37 @@ export class AiService {
     );
     const clarifiedDestinationLocation = this.inferLocationFromClarification(
       transcript,
-      "where did you place the received stock",
+      "where should it go",
       locations,
     );
     const action =
-      this.inferActionFromTranscript(transcript) ?? clarifiedAction;
+      contextAction ?? this.inferActionFromTranscript(transcript) ?? clarifiedAction;
     const validatedFieldConfidence = {
       ...rawExtraction.fieldConfidence,
-      action: clarifiedAction
-        ? Math.max(rawExtraction.fieldConfidence.action, 0.85)
-        : rawExtraction.fieldConfidence.action,
-      sourceLocation: clarifiedSourceLocation
-        ? Math.max(rawExtraction.fieldConfidence.sourceLocation, 0.85)
-        : rawExtraction.fieldConfidence.sourceLocation,
-      destinationLocation: clarifiedDestinationLocation
-        ? Math.max(rawExtraction.fieldConfidence.destinationLocation, 0.85)
-        : rawExtraction.fieldConfidence.destinationLocation,
+      action: contextAction
+        ? 1
+        : clarifiedAction
+          ? Math.max(rawExtraction.fieldConfidence.action, 0.85)
+          : rawExtraction.fieldConfidence.action,
+      product: contextProduct
+        ? 1
+        : rawExtraction.fieldConfidence.product,
+      quantity:
+        contextQuantity !== null || clarifiedQuantity !== null
+          ? 1
+        : rawExtraction.fieldConfidence.quantity,
+      sourceLocation: contextSourceLocation
+        ? 1
+        : clarifiedSourceLocation
+          ? Math.max(rawExtraction.fieldConfidence.sourceLocation, 0.85)
+          : rawExtraction.fieldConfidence.sourceLocation,
+      destinationLocation: contextDestinationLocation
+        ? 1
+        : clarifiedDestinationLocation
+          ? Math.max(rawExtraction.fieldConfidence.destinationLocation, 0.85)
+          : rawExtraction.fieldConfidence.destinationLocation,
     };
-    const product = this.matchProduct(
+    const product = contextProduct ?? this.matchProduct(
       rawExtraction.productSku,
       transcript,
       products,
@@ -297,6 +403,7 @@ export class AiService {
         rawExtraction.fieldConfidence.product >= 0.5,
     );
     const matchedSourceLocation =
+      contextSourceLocation ??
       clarifiedSourceLocation ??
       this.matchLocation(
         rawExtraction.sourceLocationCode,
@@ -306,6 +413,7 @@ export class AiService {
           rawExtraction.fieldConfidence.sourceLocation >= 0.5,
       );
     const matchedDestinationLocation =
+      contextDestinationLocation ??
       clarifiedDestinationLocation ??
       this.matchLocation(
         rawExtraction.destinationLocationCode,
@@ -318,10 +426,18 @@ export class AiService {
     let sourceLocationSource: string | null = null;
     let destinationLocationSource: string | null = null;
     if (matchedSourceLocation) {
-      sourceLocationSource = clarifiedSourceLocation ? "CLARIFIED" : "SPOKEN";
+      sourceLocationSource = contextSourceLocation
+        ? "ASSIGNED_TASK"
+        : clarifiedSourceLocation
+          ? "CLARIFIED"
+          : "SPOKEN";
     }
     if (matchedDestinationLocation) {
-      destinationLocationSource = clarifiedDestinationLocation ? "CLARIFIED" : "SPOKEN";
+      destinationLocationSource = contextDestinationLocation
+        ? "ASSIGNED_TASK"
+        : clarifiedDestinationLocation
+          ? "CLARIFIED"
+          : "SPOKEN";
     }
 
     // Assign locations based on action and try auto-resolution.
@@ -363,11 +479,12 @@ export class AiService {
           : StockCondition.GOOD;
     const quantityKnown =
       rawExtraction.quantityKnown &&
-      (this.hasExplicitQuantity(
+      (contextQuantity !== null ||
+        this.hasExplicitQuantity(
         transcript,
         rawExtraction.quantity,
         product?.sku,
-      ) ||
+        ) ||
         (clarifiedFields.has("quantity") &&
           rawExtraction.fieldConfidence.quantity >= 0.5));
     const referenceNumber =
@@ -480,6 +597,413 @@ export class AiService {
     };
   }
 
+  /**
+   * Clear warehouse commands do not need a generative model. Grounding the
+   * action, item, quantity and location in master data makes the common path
+   * both faster and stricter. Ambiguous speech, clarification answers and
+   * free-text references still use Qwen below.
+   */
+  private async tryDeterministicExtraction(
+    transcript: string,
+    evidenceId: string | undefined,
+    userId: string,
+    products: Array<{
+      id: string;
+      sku: string;
+      name: string;
+      unit: string;
+      safetyStock: number;
+    }>,
+    locations: Array<{ id: string; code: string; name: string }>,
+    context?: ExtractInventoryContextDto,
+  ) {
+    if (
+      /clarification answer to/i.test(transcript) ||
+      /\b(?:order|reference|purchase order|po number|because|notes?)\b/i.test(
+        transcript,
+      )
+    ) {
+      return null;
+    }
+
+    const action = context?.action
+      ? (context.action as InventoryAction)
+      : this.inferUnambiguousAction(transcript);
+    if (!action) return null;
+
+    const spoken = this.normalize(transcript);
+    const mentionedProducts = products.filter((product) =>
+      this.transcriptExplicitlyMentionsProduct(spoken, product),
+    );
+    if (mentionedProducts.length > 1) return null;
+    const contextProduct = context?.productSku
+      ? products.find(
+          (candidate) =>
+            candidate.sku.toLowerCase() === context.productSku!.toLowerCase(),
+        ) ?? null
+      : context?.productName
+        ? products.find(
+            (candidate) =>
+              this.normalize(candidate.name) ===
+              this.normalize(context.productName!),
+          ) ?? null
+        : null;
+    const product = contextProduct ?? mentionedProducts[0] ?? null;
+    const contextQuantity =
+      context &&
+      !/\b(?:order|reference|purchase order|po number|because|notes?)\b/i.test(
+        transcript,
+      )
+        ? this.parseQuantityWords(
+            transcript
+              .toLowerCase()
+              .replace(/[.,?!]+/g, "")
+              .replace(
+                /\b(?:units?|pieces?|boxes?|rolls?|pairs?|packs?|cartons?)\b$/,
+                "",
+              )
+              .trim()
+              .split(/\s+/)
+              .filter(Boolean),
+          )
+        : null;
+    const quantity =
+      this.extractDeterministicQuantity(transcript, product?.unit) ??
+      contextQuantity;
+    const quantityKnown = quantity !== null;
+
+    let sourceLocation: (typeof locations)[number] | null = null;
+    let destinationLocation: (typeof locations)[number] | null = null;
+    let sourceLocationSource: string | null = null;
+    let destinationLocationSource: string | null = null;
+
+    if (context?.sourceLocationCode) {
+      sourceLocation =
+        locations.find(
+          (location) =>
+            location.code.toLowerCase() ===
+            context.sourceLocationCode!.toLowerCase(),
+        ) ?? null;
+      sourceLocationSource = sourceLocation ? "ASSIGNED_TASK" : null;
+    }
+    if (context?.destinationLocationCode) {
+      destinationLocation =
+        locations.find(
+          (location) =>
+            location.code.toLowerCase() ===
+            context.destinationLocationCode!.toLowerCase(),
+        ) ?? null;
+      destinationLocationSource = destinationLocation ? "ASSIGNED_TASK" : null;
+    }
+
+    if (action === InventoryAction.TRANSFER) {
+      const route = spoken.match(/\bfrom\b\s+(.+?)\s+\bto\b\s+(.+)$/);
+      if (route && !sourceLocation && !destinationLocation) {
+        sourceLocation = this.matchLocation("", route[1], locations);
+        destinationLocation = this.matchLocation("", route[2], locations);
+      }
+      if (sourceLocation && !sourceLocationSource) sourceLocationSource = "SPOKEN";
+      if (destinationLocation && !destinationLocationSource)
+        destinationLocationSource = "SPOKEN";
+    } else if (!sourceLocation && !destinationLocation) {
+      const spokenLocation = this.matchLocation("", transcript, locations);
+      if (action === InventoryAction.RECEIVE) {
+        destinationLocation = spokenLocation;
+        if (destinationLocation) destinationLocationSource = "SPOKEN";
+      } else {
+        sourceLocation = spokenLocation;
+        if (sourceLocation) sourceLocationSource = "SPOKEN";
+      }
+    }
+
+    if (
+      (action === InventoryAction.CYCLE_COUNT ||
+        action === InventoryAction.DAMAGE) &&
+      !sourceLocation
+    ) {
+      const zone = await this.locationResolver.resolveWorkerZone(userId);
+      if (zone) {
+        sourceLocation = { id: zone.id, code: zone.code, name: zone.name };
+        sourceLocationSource = "WORKER_ZONE";
+      }
+    }
+
+    if (action === InventoryAction.SHIP && !sourceLocation && product) {
+      const shipping = await this.locationResolver.resolveShippingSource(
+        userId,
+        product.id,
+      );
+      if (shipping) {
+        sourceLocation = {
+          id: shipping.id,
+          code: shipping.code,
+          name: shipping.name,
+        };
+        sourceLocationSource = "WORKER_ZONE";
+      }
+    }
+
+    const missingFields = this.findMissingFields({
+      action,
+      product,
+      quantityKnown,
+      sourceLocation,
+      destinationLocation,
+    });
+    const fieldConfidence = {
+      action: 1,
+      product: product ? 1 : 0,
+      quantity: quantityKnown ? 1 : 0,
+      sourceLocation: sourceLocation ? 1 : 0,
+      destinationLocation: destinationLocation ? 1 : 0,
+      condition: 1,
+      referenceNumber: 0,
+    };
+    const relevantConfidence = [
+      fieldConfidence.action,
+      fieldConfidence.product,
+      fieldConfidence.quantity,
+      action === InventoryAction.RECEIVE
+        ? fieldConfidence.destinationLocation
+        : fieldConfidence.sourceLocation,
+      ...(action === InventoryAction.TRANSFER
+        ? [fieldConfidence.destinationLocation]
+        : []),
+    ];
+    const confidence =
+      relevantConfidence.reduce((sum, value) => sum + value, 0) /
+      relevantConfidence.length;
+
+    return {
+      transcript,
+      evidenceId: evidenceId ?? null,
+      model: "deterministic-fast-path",
+      readyForConfirmation: missingFields.length === 0,
+      requiresManagerReview: (
+        [
+          InventoryAction.CYCLE_COUNT,
+          InventoryAction.DAMAGE,
+        ] as InventoryAction[]
+      ).includes(action),
+      confidence: Number(confidence.toFixed(3)),
+      missingFields,
+      lowConfidenceFields: [] as string[],
+      clarificationQuestions: this.buildClarificationQuestions(missingFields),
+      sourceLocationSource,
+      destinationLocationSource,
+      fields: {
+        action,
+        product,
+        quantity,
+        sourceLocation,
+        destinationLocation,
+        condition:
+          action === InventoryAction.DAMAGE
+            ? StockCondition.DAMAGED
+            : StockCondition.GOOD,
+        referenceNumber: null,
+        notes: null,
+      },
+      fieldConfidence,
+      safetyNotice:
+        "AI extracted these details but did not create or post an inventory transaction.",
+    };
+  }
+
+  private inferUnambiguousAction(transcript: string) {
+    const spoken = this.normalize(transcript);
+    const rules: Array<[InventoryAction, RegExp]> = [
+      [InventoryAction.TRANSFER, /\b(?:transfer|transferred|move|moved)\b/],
+      [
+        InventoryAction.RECEIVE,
+        /\b(?:receive|received|incoming|delivered|put|placed|add|added)\b/,
+      ],
+      [InventoryAction.SHIP, /\b(?:ship|shipped|dispatch|dispatched)\b/],
+      [InventoryAction.CYCLE_COUNT, /\b(?:count|counted|cycle count)\b/],
+      [InventoryAction.DAMAGE, /\b(?:damage|damaged|broken)\b/],
+    ];
+    const matches = rules.filter(([, pattern]) => pattern.test(spoken));
+    return matches.length === 1 ? matches[0][0] : null;
+  }
+
+  private transcriptExplicitlyMentionsProduct(
+    spoken: string,
+    product: { sku: string; name: string },
+  ) {
+    const sku = this.normalize(product.sku);
+    const skuNumber = sku.replace(/^item\s*/, "");
+    const name = this.normalize(product.name);
+    return (
+      new RegExp(`(?:^|\\s)${this.escapeRegExp(sku)}(?:\\s|$)`).test(spoken) ||
+      (skuNumber.length >= 3 &&
+        new RegExp(`\\b${this.escapeRegExp(skuNumber)}\\b`).test(spoken)) ||
+      new RegExp(`(?:^|\\s)${this.escapeRegExp(name)}(?:\\s|$)`).test(spoken)
+    );
+  }
+
+  private extractDeterministicQuantity(
+    transcript: string,
+    productUnit?: string,
+  ) {
+    const words = this.normalize(transcript).split(" ").filter(Boolean);
+    const units = new Set([
+      "unit",
+      "units",
+      "piece",
+      "pieces",
+      "box",
+      "boxes",
+      "roll",
+      "rolls",
+      "pair",
+      "pairs",
+      "pack",
+      "packs",
+      "carton",
+      "cartons",
+    ]);
+    const normalizedUnit = productUnit ? this.normalize(productUnit) : "";
+    if (normalizedUnit) {
+      units.add(normalizedUnit);
+      units.add(`${normalizedUnit}s`);
+    }
+
+    const numberWords = new Set([
+      "zero",
+      "one",
+      "two",
+      "three",
+      "four",
+      "five",
+      "six",
+      "seven",
+      "eight",
+      "nine",
+      "ten",
+      "eleven",
+      "twelve",
+      "thirteen",
+      "fourteen",
+      "fifteen",
+      "sixteen",
+      "seventeen",
+      "eighteen",
+      "nineteen",
+      "twenty",
+      "thirty",
+      "forty",
+      "fifty",
+      "sixty",
+      "seventy",
+      "eighty",
+      "ninety",
+      "hundred",
+      "and",
+    ]);
+    const candidates: number[] = [];
+
+    for (let index = 0; index < words.length; index += 1) {
+      if (!units.has(words[index])) continue;
+      const quantityWords: string[] = [];
+      for (
+        let cursor = index - 1;
+        cursor >= 0 && quantityWords.length < 6;
+        cursor -= 1
+      ) {
+        const word = words[cursor];
+        if (!/^\d+$/.test(word) && !numberWords.has(word)) break;
+        quantityWords.unshift(word);
+      }
+      const parsed = this.parseQuantityWords(quantityWords);
+      if (parsed !== null) candidates.push(parsed);
+    }
+
+    const unique = [...new Set(candidates)];
+    return unique.length === 1 ? unique[0] : null;
+  }
+
+  private parseQuantityWords(words: string[]) {
+    if (words.length === 1 && /^\d+$/.test(words[0])) {
+      const value = Number(words[0]);
+      return Number.isSafeInteger(value) ? value : null;
+    }
+    if (words.length === 0 || words.some((word) => /^\d+$/.test(word))) {
+      return null;
+    }
+    const values: Record<string, number> = {
+      zero: 0,
+      one: 1,
+      two: 2,
+      three: 3,
+      four: 4,
+      five: 5,
+      six: 6,
+      seven: 7,
+      eight: 8,
+      nine: 9,
+      ten: 10,
+      eleven: 11,
+      twelve: 12,
+      thirteen: 13,
+      fourteen: 14,
+      fifteen: 15,
+      sixteen: 16,
+      seventeen: 17,
+      eighteen: 18,
+      nineteen: 19,
+      twenty: 20,
+      thirty: 30,
+      forty: 40,
+      fifty: 50,
+      sixty: 60,
+      seventy: 70,
+      eighty: 80,
+      ninety: 90,
+    };
+    let value = 0;
+    let current = 0;
+    let recognized = false;
+    for (const word of words) {
+      if (word === "and") continue;
+      if (word === "hundred") {
+        if (current === 0) return null;
+        current *= 100;
+        recognized = true;
+        continue;
+      }
+      const numeric = values[word];
+      if (numeric === undefined) return null;
+      current += numeric;
+      recognized = true;
+    }
+    value += current;
+    return recognized && value <= 999_999 ? value : null;
+  }
+
+  private extractClarificationQuantity(transcript: string): number | null {
+    const match = transcript.match(
+      /Clarification answer to "([^"]+)":\s*([^\n]+)/i,
+    );
+    if (!match || !/quantity|how many|number of/i.test(match[1])) {
+      return null;
+    }
+
+    const answer = match[2]
+      .trim()
+      .replace(/[.!?,]+$/g, "")
+      .replace(
+        /\b(?:units?|pieces?|boxes?|rolls?|pairs?|packs?|cartons?)\b$/i,
+        "",
+      )
+      .trim()
+      .toLowerCase();
+    if (/^\d+$/.test(answer)) {
+      const value = Number(answer);
+      return Number.isSafeInteger(value) && value <= 999_999 ? value : null;
+    }
+    return this.parseQuantityWords(answer.split(/\s+/));
+  }
+
   private async resolveUser(actor: AuthenticatedUser) {
     const user = actor.email
       ? await this.prisma.user.findUnique({
@@ -553,10 +1077,17 @@ export class AiService {
   private inferLocationFromClarification<
     T extends { id: string; code: string; name: string },
   >(transcript: string, expectedQuestion: string, locations: T[]) {
-    const answer = this.getClarificationAnswer(
-      transcript,
-      expectedQuestion,
-    );
+    const legacyQuestion =
+      expectedQuestion === "where did it come from"
+        ? "which location did the stock come from"
+        : expectedQuestion === "where should it go"
+          ? "where did you place the received stock"
+          : null;
+    const answer =
+      this.getClarificationAnswer(transcript, expectedQuestion) ??
+      (legacyQuestion
+        ? this.getClarificationAnswer(transcript, legacyQuestion)
+        : null);
     if (!answer) return null;
 
     const exactMatches = locations.filter((location) =>
@@ -725,22 +1256,27 @@ export class AiService {
 
   private buildClarificationQuestions(missingFields: string[]) {
     const questions: Record<string, string> = {
-      action: "Which inventory action did you perform?",
-      product: "Which item or SKU does this update apply to?",
-      quantity: "What quantity should be recorded?",
-      sourceLocation: "Which location did the stock come from?",
-      destinationLocation: "Where did you place the received stock?",
+      action: "What did you do?",
+      product: "Which item?",
+      quantity: "How many?",
+      sourceLocation: "Where did it come from?",
+      destinationLocation: "Where should it go?",
     };
     return missingFields.map((field) => questions[field]);
   }
 
   private findClarifiedFields(transcript: string) {
     const fieldByQuestion: Record<string, string> = {
+      "what did you do": "action",
       "what inventory action did you perform": "action",
       "which inventory action did you perform": "action",
+      "which item": "product",
       "which item or sku does this update apply to": "product",
+      "how many": "quantity",
       "what quantity should be recorded": "quantity",
+      "where did it come from": "sourceLocation",
       "which location did the stock come from": "sourceLocation",
+      "where should it go": "destinationLocation",
       "where did you place the received stock": "destinationLocation",
     };
     const fields = new Set<string>();
@@ -794,6 +1330,7 @@ export class AiService {
 
   private inferActionFromClarification(transcript: string) {
     const answer =
+      this.getClarificationAnswer(transcript, "what did you do") ??
       this.getClarificationAnswer(
         transcript,
         "which inventory action did you perform",
@@ -861,7 +1398,7 @@ export class AiService {
       /Clarification answer to "([^"]+)":\s*([^\n]+)/gi;
     let answer = "";
     for (const match of transcript.matchAll(marker)) {
-      if (this.normalize(match[1]) === expectedQuestion) {
+      if (this.normalize(match[1]) === this.normalize(expectedQuestion)) {
         answer = this.normalize(match[2]);
       }
     }

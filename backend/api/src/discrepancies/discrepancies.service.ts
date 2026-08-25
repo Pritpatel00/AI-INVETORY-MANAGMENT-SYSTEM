@@ -474,20 +474,6 @@ export class DiscrepanciesService {
             );
           }
 
-          const balance = await database.inventoryBalance.findUnique({
-            where: {
-              productId_locationId: {
-                productId: current.productId,
-                locationId: current.locationId,
-              },
-            },
-          });
-          const reserved = balance?.reservedQuantity ?? 0;
-          this.inventoryRules.assertCycleCountAllowed(
-            current.countedQuantity,
-            reserved,
-          );
-
           await database.inventoryBalance.upsert({
             where: {
               productId_locationId: {
@@ -869,7 +855,6 @@ export class DiscrepanciesService {
           this.inventoryRules.assertAvailableStock(
             transferQuantity,
             sourceBalance?.quantity ?? 0,
-            sourceBalance?.reservedQuantity ?? 0,
           );
           const destinationBalance = await database.inventoryBalance.findUnique({
             where: {

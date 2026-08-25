@@ -6,7 +6,7 @@ import { LocationResolverService } from "./location-resolver.service";
 function createPrismaMock(overrides: {
   userZone?: string | null;
   zoneLocation?: { id: string; code: string; name: string } | null;
-  balance?: { quantity: number; reservedQuantity: number } | null;
+  balance?: { quantity: number } | null;
 }): PrismaService {
   const locationFindFirst = jest.fn(async () => {
     return overrides.zoneLocation ?? null;
@@ -61,7 +61,7 @@ describe("LocationResolverService", () => {
     const prisma = createPrismaMock({
       userZone: "storage",
       zoneLocation: { id: "zone-1", code: "STORAGE", name: "Storage" },
-      balance: { quantity: 50, reservedQuantity: 0 },
+      balance: { quantity: 50 },
     });
     const service = new LocationResolverService(prisma);
     const result = await service.resolveShippingSource("user-1", "prod-1");
@@ -78,7 +78,7 @@ describe("LocationResolverService", () => {
     const prisma = createPrismaMock({
       userZone: "storage",
       zoneLocation: { id: "zone-1", code: "STORAGE", name: "Storage" },
-      balance: { quantity: 10, reservedQuantity: 10 },
+      balance: { quantity: 10 },
     });
     const service = new LocationResolverService(prisma);
     const result = await service.resolveShippingSource("user-1", "prod-1");

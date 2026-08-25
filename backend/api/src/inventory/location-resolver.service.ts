@@ -1,7 +1,12 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 
-export type LocationSourceType = "SPOKEN" | "RECEIVING_DEFAULT" | "WORKER_ZONE" | "CLARIFIED";
+export type LocationSourceType =
+  | "SPOKEN"
+  | "RECEIVING_DEFAULT"
+  | "WORKER_ZONE"
+  | "CLARIFIED"
+  | "ASSIGNED_TASK";
 
 export interface ResolvedLocationResult {
   id: string;
@@ -67,10 +72,10 @@ export class LocationResolverService {
           locationId: zoneLocation.id,
         },
       },
-      select: { quantity: true, reservedQuantity: true },
+      select: { quantity: true },
     });
     if (!balance) return null;
-    const available = balance.quantity - balance.reservedQuantity;
+    const available = balance.quantity;
     if (available <= 0) return null;
 
     return zoneLocation;

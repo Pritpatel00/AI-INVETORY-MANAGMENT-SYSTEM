@@ -1,8 +1,7 @@
-import { LayoutDashboard, ClipboardCheck, Boxes, FileClock, Settings, ArrowRightLeft, Truck, PackageCheck, Warehouse, UsersRound, Activity, X, UserRound, SearchCheck, LockKeyhole, type LucideIcon } from "lucide-react";
+import { LayoutDashboard, ClipboardCheck, Boxes, FileClock, Settings, ArrowRightLeft, Truck, PackageCheck, Warehouse, UsersRound, Activity, X, UserRound, SearchCheck, type LucideIcon } from "lucide-react";
 import type { Role } from "../types";
 import { Brand } from "./Brand";
 import { roleLabel } from "./helpers";
-import { stockReservationsEnabled } from "../reservations/feature";
 
 interface AppSidebarProps {
   role: Role;
@@ -26,7 +25,6 @@ export function AppSidebar({ role, displayName, activePage, onNavigate, mobileOp
     [LayoutDashboard, "Overview"],
     [ArrowRightLeft, "Transactions"],
     [SearchCheck, "Discrepancies"],
-    ...(stockReservationsEnabled ? [[LockKeyhole, "Reservations"] as [LucideIcon, string]] : []),
     [Truck, "Purchase Items"],
     [ClipboardCheck, "Task planning"],
     [PackageCheck, "Catalog"],

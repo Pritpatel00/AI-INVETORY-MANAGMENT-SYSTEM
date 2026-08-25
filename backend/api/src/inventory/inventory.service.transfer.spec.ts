@@ -11,7 +11,6 @@ import { DiscrepanciesService } from "../discrepancies/discrepancies.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TasksService } from "../tasks/tasks.service";
-import { ReservationsService } from "../reservations/reservations.service";
 import { InventoryService } from "./inventory.service";
 import { InventoryRulesEngine } from "./rules/inventory-rules.engine";
 
@@ -89,14 +88,12 @@ describe("InventoryService legacy automatic-transaction approval compatibility",
         const locationId = where.productId_locationId.locationId as string;
         return {
           quantity: quantities.get(locationId) ?? 0,
-          reservedQuantity: 0,
         };
       }),
       findMany: jest.fn(async () =>
         Array.from(quantities, ([locationId, quantity]) => ({
           locationId,
           quantity,
-          reservedQuantity: 0,
         })),
       ),
       update: jest.fn(async ({ where, data }) => {
@@ -139,7 +136,6 @@ describe("InventoryService legacy automatic-transaction approval compatibility",
           active: true,
           safetyStock: 0,
           reorderQuantity: 0,
-          supplier: null,
         })),
       },
       reorderDraft: {
@@ -163,7 +159,6 @@ describe("InventoryService legacy automatic-transaction approval compatibility",
       {} as DiscrepanciesService,
       {} as DiscrepancyAuditService,
       {} as NotificationsService,
-      {} as ReservationsService,
     );
 
     const result = await service.approveTransaction(

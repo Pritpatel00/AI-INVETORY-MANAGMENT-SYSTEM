@@ -75,7 +75,7 @@ async function ensureBalance(productId: string, locationId: string, openingQuant
   return prisma.inventoryBalance.upsert({
     where: { productId_locationId: { productId, locationId } },
     update: {},
-    create: { productId, locationId, quantity: openingQuantity, reservedQuantity: 0 },
+    create: { productId, locationId, quantity: openingQuantity },
   });
 }
 
@@ -133,12 +133,6 @@ async function main() {
       data: { employeeId: "SAMPLE-MANAGER", email: "sample.manager@inventory.local", displayName: "Sample Inventory Manager", role: UserRole.MANAGER },
     }));
 
-  const supplier = await prisma.supplier.upsert({
-    where: { code: "SAMPLE-SUP" },
-    update: { name: "Sample Warehouse Supplier", active: true },
-    create: { code: "SAMPLE-SUP", name: "Sample Warehouse Supplier", email: "orders@sample-supplier.local", leadTimeDays: 3, minimumOrderQuantity: 10 },
-  });
-
   const locations = new Map<string, { id: string; name: string }>();
   for (const [code, name] of sampleLocations) {
     const saved = await prisma.location.upsert({
@@ -153,8 +147,8 @@ async function main() {
   for (const [sku, name, locationCode] of sampleItems) {
     const product = await prisma.product.upsert({
       where: { sku },
-      update: { name, unit: "unit", safetyStock: 20, reorderQuantity: 40, supplierId: supplier.id, supplierName: supplier.name, supplierEmail: supplier.email, active: true },
-      create: { sku, name, unit: "unit", safetyStock: 20, reorderQuantity: 40, supplierId: supplier.id, supplierName: supplier.name, supplierEmail: supplier.email, active: true },
+      update: { name, unit: "unit", safetyStock: 20, reorderQuantity: 40, active: true },
+      create: { sku, name, unit: "unit", safetyStock: 20, reorderQuantity: 40, active: true },
     });
     products.push({ id: product.id, sku, name, locationCode });
     await ensureBalance(product.id, locations.get(locationCode)!.id, 120 + products.length * 3);

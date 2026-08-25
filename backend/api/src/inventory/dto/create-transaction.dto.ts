@@ -1,4 +1,4 @@
-import { InventoryAction, StockCondition } from "@prisma/client";
+import { InventoryAction, LocationSource, StockCondition } from "@prisma/client";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import {
   IsEnum,
@@ -87,20 +87,20 @@ export class CreateTransactionDto {
   clientRequestId?: string;
 
   @ApiPropertyOptional({
-    description: "How the source location was determined: SPOKEN, RECEIVING_DEFAULT, WORKER_ZONE, or CLARIFIED.",
-    enum: ["SPOKEN", "RECEIVING_DEFAULT", "WORKER_ZONE", "CLARIFIED"],
+    description: "How the source location was determined.",
+    enum: LocationSource,
   })
   @IsOptional()
-  @IsString()
-  sourceLocationSource?: string;
+  @IsEnum(LocationSource)
+  sourceLocationSource?: LocationSource;
 
   @ApiPropertyOptional({
-    description: "How the destination location was determined: SPOKEN, RECEIVING_DEFAULT, WORKER_ZONE, or CLARIFIED.",
-    enum: ["SPOKEN", "RECEIVING_DEFAULT", "WORKER_ZONE", "CLARIFIED"],
+    description: "How the destination location was determined.",
+    enum: LocationSource,
   })
   @IsOptional()
-  @IsString()
-  destinationLocationSource?: string;
+  @IsEnum(LocationSource)
+  destinationLocationSource?: LocationSource;
 
   @ApiPropertyOptional({
     description:
@@ -112,7 +112,7 @@ export class CreateTransactionDto {
 
   @ApiPropertyOptional({
     description:
-      "When a worker confirms an assigned reservation shipment task by voice, the SHIP task the transaction is the result of. Links the transaction to the task so the reservation-aware shipment movement is applied on confirmation.",
+      "The assigned warehouse task that produced this inventory transaction. The backend validates its action, item, route and assignee, then completes it atomically when the result is confirmed.",
   })
   @IsOptional()
   @IsUUID()

@@ -105,10 +105,6 @@ export interface ApiProduct {
   unit: string;
   safetyStock: number;
   reorderQuantity: number;
-  supplierName?: string | null;
-  supplierEmail?: string | null;
-  supplierId?: string | null;
-  supplier?: ApiSupplier | null;
   controlled?: boolean;
 }
 
@@ -118,16 +114,7 @@ export interface ProductInput {
   unit: string;
   safetyStock: number;
   reorderQuantity: number;
-  supplierName?: string;
-  supplierEmail?: string;
-  supplierId?: string;
   controlled?: boolean;
-}
-
-export interface ApiSupplier {
-  id: string; code: string; name: string; contactName?: string | null; email?: string | null;
-  phone?: string | null; address?: string | null; leadTimeDays: number;
-  minimumOrderQuantity: number; active: boolean;
 }
 export interface ApiCycleCountPlan {
   id: string;
@@ -178,17 +165,12 @@ export interface ApiCycleCountPlanDetail extends ApiCycleCountPlan {
   instructions?: string | null;
   tasks: ApiCycleCountPlanTask[];
 }
-export interface ApiInventoryTask { id:string; type:string; priority:"LOW"|"MEDIUM"|"HIGH"|"URGENT"; status:"OPEN"|"IN_PROGRESS"|"COMPLETED"|"CANCELLED"; title:string; description?:string|null; dueAt?:string|null; createdAt:string; startedAt?:string|null; completedAt?:string|null; quantity?:number|null; product?:ApiProduct|null; location?:ApiLocation|null; sourceLocation?:ApiLocation|null; destinationLocation?:ApiLocation|null; assignedTo?:{id:string;employeeId:string;displayName:string}|null; cycleCountPlan?:ApiCycleCountPlan|null; sourceTransactionId?:string|null; reservationId?:string|null; shipmentReference?:string|null; preparedBy?:{id:string;employeeId:string;displayName:string}|null; reservation?:{ id:string; reservationNumber:string; request?:{ referenceNumber:string; requestedFor:string } }|null; discrepancies?: Array<{ id:string; caseNumber:string; expectedQuantity:number; countedQuantity:number; differenceQuantity:number; status:string; managerNotes?:string|null }> | null; }
+export interface ApiInventoryTask { id:string; type:string; priority:"LOW"|"MEDIUM"|"HIGH"|"URGENT"; status:"OPEN"|"IN_PROGRESS"|"COMPLETED"|"CANCELLED"; title:string; description?:string|null; dueAt?:string|null; createdAt:string; startedAt?:string|null; completedAt?:string|null; quantity?:number|null; product?:ApiProduct|null; location?:ApiLocation|null; sourceLocation?:ApiLocation|null; destinationLocation?:ApiLocation|null; assignedTo?:{id:string;employeeId:string;displayName:string}|null; cycleCountPlan?:ApiCycleCountPlan|null; sourceTransactionId?:string|null; preparedBy?:{id:string;employeeId:string;displayName:string}|null; discrepancies?: Array<{ id:string; caseNumber:string; expectedQuantity:number; countedQuantity:number; differenceQuantity:number; status:string; managerNotes?:string|null }> | null; }
 export interface ApiTaskAssignee { id:string; employeeId:string; displayName:string; shift?:string|null; warehouseZone?:string|null; openTaskCount?: number; }
-
-export type ShipmentAssignmentMode = "AUTO" | "MANUAL" | "UNASSIGNED";
-
-export type SupplierInput = Omit<ApiSupplier, "id" | "active"> & { active?: boolean };
 
 export interface ApiBalance {
   id: string;
   quantity: number;
-  reservedQuantity: number;
   product: ApiProduct;
   location: ApiLocation;
 }
@@ -197,7 +179,6 @@ export interface OpeningBalanceInput {
   productId: string;
   locationId: string;
   quantity: number;
-  reservedQuantity: number;
   effectiveDate: string;
   reason: string;
 }
@@ -253,6 +234,21 @@ export interface SpeechTranscription {
   duration: number;
   model: string;
   segments: Array<{ start: number; end: number; text: string }>;
+}
+
+export type InventoryExtractionAction =
+  | "RECEIVE"
+  | "SHIP"
+  | "TRANSFER"
+  | "CYCLE_COUNT"
+  | "DAMAGE";
+
+export interface InventoryExtractionContext {
+  action?: InventoryExtractionAction;
+  productSku?: string;
+  productName?: string;
+  sourceLocationCode?: string;
+  destinationLocationCode?: string;
 }
 
 export interface InventoryExtraction {
@@ -413,46 +409,6 @@ export interface ApiReorderDraft {
   product: ApiProduct;
   location: ApiLocation;
 }
-export interface ApiReservationAuditEvent { id: string; action: string; details?: string | null; createdAt: string; actor: { displayName: string }; }
-export interface ApiStockRequestLine {
-  id: string;
-  requiredQuantity: number;
-  reservedQuantity: number;
-  shippedQuantity: number;
-  product: ApiProduct;
-}
-export interface ApiReservationAllocation {
-  id: string;
-  quantity: number;
-  shippedQuantity: number;
-  releasedQuantity: number;
-  product: ApiProduct;
-  location: ApiLocation;
-}
-export interface ApiStockReservation {
-  id: string;
-  reservationNumber: string;
-  status: "ACTIVE" | "PARTIALLY_SHIPPED" | "COMPLETED" | "RELEASED" | "CANCELLED" | "EXPIRED";
-  releaseReason?: string | null;
-  createdAt: string;
-  allocations: ApiReservationAllocation[];
-  auditEvents?: ApiReservationAuditEvent[];
-  shipmentTasks?: ApiInventoryTask[];
-}
-export interface ApiStockRequest {
-  id: string;
-  requestNumber: string;
-  requestType: string;
-  referenceNumber: string;
-  requestedFor: string;
-  requiredDate: string;
-  notes?: string | null;
-  status: "CONFIRMED" | "PARTIALLY_RESERVED" | "FULLY_RESERVED" | "PARTIALLY_FULFILLED" | "COMPLETED" | "CANCELLED" | "EXPIRED";
-  createdAt: string;
-  lines: ApiStockRequestLine[];
-  reservations: ApiStockReservation[];
-  auditEvents?: ApiReservationAuditEvent[];
-}
 export type ServiceHealthStatus = "healthy" | "degraded" | "unavailable";
 export interface ApiSystemHealth { status: "healthy" | "degraded"; checkedAt: string; services: Array<{ key: string; name: string; status: ServiceHealthStatus; detail: string }>; }
 export interface ApiSystemUser { id: string; employeeId: string; email: string; displayName: string; role: "WORKER" | "MANAGER" | "ADMINISTRATOR"; shift?: string | null; warehouseZone?: string | null; active: boolean; lastLoginAt?: string | null; createdAt: string; updatedAt: string; _count: { createdTransactions: number; assignedTasks: number }; }
@@ -495,53 +451,6 @@ export async function fetchInventorySnapshot(): Promise<InventorySnapshot> {
   ]);
 
   return { products, locations, balances, transactions };
-}
-export function fetchStockRequests() { return request<ApiStockRequest[]>("/reservations/stock-requests"); }
-export function fetchNextStockRequestNumber() { return request<{ requestNumber: string }>("/reservations/stock-requests/next-number"); }
-export function fetchStockReservations() { return request<ApiStockReservation[]>("/reservations"); }
-export function createStockRequest(input: {
-  requestType: string;
-  /** Optional external customer reference. The backend always generates the internal REQ number. */
-  referenceNumber?: string;
-  /** Read-only preview used to prevent silently changing the number during concurrent creation. */
-  expectedRequestNumber?: string;
-  requestedFor: string;
-  requiredDate: string;
-  notes?: string;
-  lines: Array<{ productId: string; requiredQuantity: number }>;
-}) {
-  return request<ApiStockRequest>("/reservations/stock-requests", { method: "POST", body: JSON.stringify(input) });
-}
-export function reserveRecommendedStock(requestId: string) {
-  return request<ApiStockRequest>(`/reservations/stock-requests/${requestId}/reserve-recommended`, { method: "POST" });
-}
-export function releaseStockReservation(reservationId: string, reason: string) {
-  return request<{ id: string; status: string; cancelledShipmentTasks?: number }>(`/reservations/${reservationId}/release`, { method: "POST", body: JSON.stringify({ reason }) });
-}
-export function fulfilStockReservation(reservationId: string, reason: string) {
-  return request<{ id: string; status: string; fulfilledQuantity: number }>(`/reservations/${reservationId}/fulfil`, { method: "POST", body: JSON.stringify({ reason }) });
-}
-export function prepareReservationShipment(
-  reservationId: string,
-  input: {
-    allocationId: string;
-    quantity: number;
-    assignmentMode: ShipmentAssignmentMode;
-    assignedToId?: string;
-    dueAt?: string;
-    priority?: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
-    instructions?: string;
-    /** Optional external courier / delivery-note / tracking reference. The system-generated SHIP reference is never replaced. */
-    externalReference?: string;
-  },
-) {
-  return request<{ idempotent: boolean; task: ApiInventoryTask; reservation: ApiStockReservation }>(`/reservations/${reservationId}/shipments`, { method: "POST", body: JSON.stringify(input) });
-}
-export function cancelStockRequest(requestId: string, reason: string) {
-  return request<{ id: string; status: string }>(`/reservations/stock-requests/${requestId}/cancel`, { method: "POST", body: JSON.stringify({ reason }) });
-}
-export function expireDueStockRequests() {
-  return request<{ expiredRequests: number }>("/reservations/expire-due", { method: "POST" });
 }
 export function fetchDetailedSystemHealth() { return request<ApiSystemHealth>("/health/detailed"); }
 export function fetchSystemUsers() { return request<ApiSystemUser[]>("/auth/users"); }
@@ -586,10 +495,6 @@ export function deleteInventoryProduct(id: string, administratorOverride = false
   return request<ApiProduct>(endpoint, { method: "DELETE" });
 }
 
-export function fetchSuppliers() { return request<ApiSupplier[]>("/suppliers"); }
-export function createSupplier(input: SupplierInput) { return request<ApiSupplier>("/suppliers", { method: "POST", body: JSON.stringify(input) }); }
-export function updateSupplier(id: string, input: Partial<SupplierInput>) { return request<ApiSupplier>(`/suppliers/${id}`, { method: "PATCH", body: JSON.stringify(input) }); }
-export function deleteSupplier(id: string) { return request<ApiSupplier>(`/suppliers/${id}`, { method: "DELETE" }); }
 export function createLocation(input: LocationInput) { return request<ApiLocation>("/inventory/locations", { method: "POST", body: JSON.stringify(input) }); }
 export function updateLocation(id: string, input: Partial<LocationInput>) { return request<ApiLocation>(`/inventory/locations/${id}`, { method: "PATCH", body: JSON.stringify(input) }); }
 export function deleteLocation(id: string) { return request<{ deleted: boolean; id: string }>(`/inventory/locations/${id}`, { method: "DELETE" }); }
@@ -597,7 +502,7 @@ export function removeDefaultInventoryData() {
   return request<{ cleared: boolean; counts: Record<string, number> }>("/inventory/default-data", { method: "DELETE" });
 }
 export function createOpeningBalance(input: OpeningBalanceInput) { return request<{ balance: ApiBalance; transaction: ApiTransaction }>("/inventory/opening-balances", { method: "POST", body: JSON.stringify(input) }); }
-export function adjustInventoryBalance(input: { balanceId: string; quantity: number; reservedQuantity: number; reason: string }) { return request<{ balance: ApiBalance; transaction: ApiTransaction }>("/inventory/balance-adjustments", { method: "POST", body: JSON.stringify(input) }); }
+export function adjustInventoryBalance(input: { balanceId: string; quantity: number; reason: string }) { return request<{ balance: ApiBalance; transaction: ApiTransaction }>("/inventory/balance-adjustments", { method: "POST", body: JSON.stringify(input) }); }
 export function fetchDiscrepancies(query: {
   page?: number;
   pageSize?: number;
@@ -811,7 +716,7 @@ export function createPendingReceive(input: {
       destinationLocationId: input.destinationLocationId,
       quantity: input.quantity,
       condition: "GOOD",
-      referenceNumber: "SUPPLIER-X",
+      referenceNumber: "RECEIPT-1001",
       notes: "Created from the worker confirmation screen.",
       clientRequestId: `web-${crypto.randomUUID()}`,
     }),
@@ -822,8 +727,7 @@ export function createPendingInventoryTransaction(
   extraction: InventoryExtraction,
   clientRequestId: string,
   recountTaskId?: string | null,
-  shipmentTaskId?: string | null,
-  cycleCountTaskId?: string | null,
+  taskId?: string | null,
 ) {
   const { fields } = extraction;
   if (!fields.action || !fields.product || fields.quantity === null) {
@@ -846,7 +750,7 @@ export function createPendingInventoryTransaction(
       evidenceId: extraction.evidenceId ?? undefined,
       clientRequestId,
       recountTaskId: recountTaskId ?? undefined,
-      taskId: shipmentTaskId ?? cycleCountTaskId ?? undefined,
+      taskId: taskId ?? undefined,
     }),
   });
 }
@@ -934,6 +838,7 @@ export async function transcribeAudio(
 export function extractInventoryDetails(input: {
   transcript: string;
   evidenceId?: string;
+  context?: InventoryExtractionContext;
 }) {
   return request<InventoryExtraction>("/ai/extract-inventory", {
     method: "POST",
@@ -976,6 +881,10 @@ export function mapTransactions(
               ? "Recount requested"
           : transaction.status === "APPROVED"
             ? "Approved"
+            : transaction.status === "PENDING"
+              // PENDING here always means confirmed + awaiting manager review
+              // (transient unconfirmed PENDING records are excluded by the backend)
+              ? "Awaiting review"
             : "Pending",
     };
   });
@@ -994,10 +903,7 @@ export function mapLowStock(balances: ApiBalance[]): LowStockItem[] {
       available: 0,
       threshold: balance.product.safetyStock,
     };
-    current.available += Math.max(
-      0,
-      balance.quantity - balance.reservedQuantity,
-    );
+    current.available += Math.max(0, balance.quantity);
     products.set(balance.product.id, current);
   }
 

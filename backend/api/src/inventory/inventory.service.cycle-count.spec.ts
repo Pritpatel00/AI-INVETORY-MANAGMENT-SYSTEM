@@ -12,7 +12,6 @@ import { DiscrepanciesService } from "../discrepancies/discrepancies.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TasksService } from "../tasks/tasks.service";
-import { ReservationsService } from "../reservations/reservations.service";
 import { InventoryService } from "./inventory.service";
 import { InventoryRulesEngine } from "./rules/inventory-rules.engine";
 
@@ -88,13 +87,11 @@ function createService(
   const inventoryBalance = {
     findUnique: jest.fn().mockResolvedValue({
       quantity: expectedQuantity,
-      reservedQuantity: 0,
     }),
     findMany: jest.fn().mockResolvedValue([
       {
         locationId: "location-id",
         quantity: expectedQuantity,
-        reservedQuantity: 0,
       },
     ]),
     upsert: jest.fn().mockResolvedValue({}),
@@ -135,7 +132,6 @@ function createService(
         active: true,
         safetyStock: product.safetyStock,
         reorderQuantity: product.reorderQuantity,
-        supplier: null,
       }),
     },
     reorderDraft: {
@@ -172,7 +168,6 @@ function createService(
     discrepancies as unknown as DiscrepanciesService,
     auditService as unknown as DiscrepancyAuditService,
     notifications as unknown as NotificationsService,
-    {} as ReservationsService,
   );
 
   return {
@@ -346,5 +341,23 @@ describe("InventoryService cycle-count confirmation", () => {
     );
     expect(context.discrepancies.createForCycleCount).toHaveBeenCalled();
     expect(context.inventoryBalance.upsert).not.toHaveBeenCalled();
+  });
+
+  test("confirming an already-posted matching cycle count is idempotent", async () => {
+    const context = createService(100, 100);
+
+    const firstResult = await context.service.confirmTransaction(
+      context.transaction.id,
+      actor,
+    );
+    expect(firstResult.outcome).toBe("POSTED");
+    expect(firstResult.idempotent).toBe(false);
+
+    const secondResult = await context.service.confirmTransaction(
+      context.transaction.id,
+      actor,
+    );
+    expect(secondResult.outcome).toBe("POSTED");
+    expect(secondResult.idempotent).toBe(true);
   });
 });

@@ -8,7 +8,7 @@ const prisma = new PrismaClient();
 // be re-seeded from scratch. Deletion order respects foreign keys (child rows
 // first). After this script runs, `npm run db:seed` recreates the demo users
 // and `npm run db:seed:catalog` recreates the clean product catalogue,
-// locations, suppliers and opening balances — with zero transactions.
+// locations and opening balances — with zero transactions.
 async function main() {
   // Voice evidence audio files stored on disk (EVIDENCE_STORAGE_PATH) are
   // removed so no orphaned recordings survive the fresh start. The path is
@@ -30,7 +30,6 @@ async function main() {
     accessAudit: await prisma.userAccessAudit.deleteMany(),
     products: await prisma.product.deleteMany(),
     locations: await prisma.location.deleteMany(),
-    suppliers: await prisma.supplier.deleteMany(),
     users: await prisma.user.deleteMany(),
   };
 
