@@ -15,7 +15,7 @@ FROM quay.io/keycloak/keycloak:26.7.1
 COPY --from=builder /opt/keycloak/ /opt/keycloak/
 
 # Bake the Nirka realm into the image
-COPY nirka-inventory-realm.json /opt/keycloak/data/import/nirka-inventory-realm.json
+COPY infrastructure/keycloak/nirka-inventory-realm.json /opt/keycloak/data/import/nirka-inventory-realm.json
 
 ENV KC_HEALTH_ENABLED=true
 ENV KC_METRICS_ENABLED=true
