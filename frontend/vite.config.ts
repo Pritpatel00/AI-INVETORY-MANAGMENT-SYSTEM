@@ -1,4 +1,5 @@
 import vinext from "vinext";
+import { nitro } from "nitro/vite";
 import { defineConfig } from "vite";
 import { sites } from "./build/sites-vite-plugin";
 
@@ -58,24 +59,19 @@ const developmentCacheReset = {
 export default defineConfig(() => {
   return {
     server: {
-      // The app runs on port 3000: vinext binds this by default, and the
-      // Keycloak realm, the NestJS API CORS origin, the Playwright specs and
-      // the project docs all expect http://localhost:3000.
       port: 3000,
       strictPort: true,
-      // Vite's dev client auto-forwards console errors to the dev server over
-      // its HMR WebSocket. If an error fires before the socket is connected,
-      // the relay crashes with `Cannot read properties of undefined (reading
-      // "send")`. The app handles its own errors, so disable the relay.
       forwardConsole: false,
       ...(isCodexSeatbeltSandbox
         ? { watch: { useFsEvents: false, usePolling: true } }
         : {}),
     },
+
     plugins: [
       developmentCacheReset,
       vinext(),
       sites(),
+      nitro(),
     ],
   };
 });
