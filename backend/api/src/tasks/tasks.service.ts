@@ -10,6 +10,7 @@ import {
   TransactionStatus,
   UserRole,
 } from "@prisma/client";
+ 
 import { createHash } from "node:crypto";
 import type { AuthenticatedUser } from "../auth/auth-user";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -717,20 +718,88 @@ export class TasksService {
     return this.prisma.inventoryTask.upsert({ where: { sourceTransactionId: transaction.id }, update: {}, create: { type: TaskType.RECOUNT, priority: TaskPriority.HIGH, title: `Recount ${transaction.product.name}`, description: "Manager requested a physical recount before inventory adjustment.", dueAt, assignedToId: transaction.createdById, productId: transaction.productId, locationId: transaction.sourceLocationId, sourceTransactionId: transaction.id } });
   }
   private async resolveUser(actor: AuthenticatedUser) {
-    const email = actor.email?.toLowerCase();
-    const found = email
-      ? await this.prisma.user.findUnique({ where: { email } })
-      : await this.prisma.user.findUnique({ where: { employeeId: actor.username.toUpperCase() } });
-    if (found) return found;
+  const employeeId = actor.username.toUpperCase();
+  const email = actor.email?.toLowerCase();
+
+  // Always look up by employeeId first
+  let user = await this.prisma.user.findUnique({
+    where: {
+      employeeId,
+    },
+  });
+
+  // If not found, fall back to email
+  if (!user && email) {
+    user = await this.prisma.user.findUnique({
+      where: {
+        email,
+      },
+    });
+  }
+
+  // Existing user
+  if (user) {
+    const updateData: Prisma.UserUpdateInput = {};
+
+    if (email && user.email !== email) {
+      updateData.email = email;
+    }
+
     const role = actor.roles.includes("administrator")
       ? UserRole.ADMINISTRATOR
       : actor.roles.includes("manager")
         ? UserRole.MANAGER
         : UserRole.WORKER;
-    return this.prisma.user.create({ data: { employeeId: actor.username.toUpperCase(), email: email ?? `${actor.username}@keycloak.local`, displayName: actor.username, role } });
-  }
-}
 
+    if (user.role !== role) {
+      updateData.role = role;
+    }
+
+    if (Object.keys(updateData).length > 0) {
+      user = await this.prisma.user.update({
+        where: {
+          id: user.id,
+        },
+        data: updateData,
+      });
+    }
+
+    return user;
+  }
+
+  const role = actor.roles.includes("administrator")
+    ? UserRole.ADMINISTRATOR
+    : actor.roles.includes("manager")
+      ? UserRole.MANAGER
+      : UserRole.WORKER;
+
+  try {
+    return await this.prisma.user.create({
+      data: {
+        employeeId,
+        email: email ?? `${actor.username}@keycloak.local`,
+        displayName: actor.username,
+        role,
+        active: true,
+      },
+    });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return this.prisma.user.findUniqueOrThrow({
+        where: {
+          employeeId,
+        },
+      });
+    }
+
+    throw error;
+  }
+  }
+
+}
 /**
  * Deterministic fingerprint of a normalized plan request. The exact same
  * request (same period, locations, assignee, priority, due date, blind flag
@@ -755,9 +824,9 @@ function createCycleCountRequestKey(input: {
     blindCount: input.blindCount,
     instructions: input.instructions,
   });
+
   return createHash("sha256").update(canonical).digest("hex");
 }
-
 function formatPeriodMonth(periodMonth: string) {
   return new Date(`${periodMonth}-01T00:00:00.000Z`).toLocaleString("en-US", {
     month: "long",
