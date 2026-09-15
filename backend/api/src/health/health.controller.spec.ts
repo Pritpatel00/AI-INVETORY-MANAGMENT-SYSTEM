@@ -35,7 +35,8 @@ describe("HealthController", () => {
     process.env.WEB_APP_ORIGIN = "http://localhost:3000";
     process.env.KEYCLOAK_ISSUER = "http://localhost:8080/realms/nirka-inventory";
     process.env.SPEECH_SERVICE_URL = "http://127.0.0.1:5001";
-    process.env.OLLAMA_URL = "http://127.0.0.1:11434";
+    process.env.RUNPOD_API_KEY = "runpod-test-key";
+    process.env.RUNPOD_ENDPOINT_ID = "test-endpoint";
   });
 
   afterEach(() => {
@@ -80,7 +81,7 @@ describe("HealthController", () => {
         "PostgreSQL",
         "Keycloak",
         "Speech-to-text",
-        "Ollama AI",
+        "Runpod AI",
       ]);
       for (const service of result.services) {
         expect(service.status).toBe("healthy");
@@ -106,7 +107,7 @@ describe("HealthController", () => {
       process.env.WEB_APP_ORIGIN = "http://web.internal:4321";
       process.env.KEYCLOAK_ISSUER = "http://idp.internal:8080/realms/acme";
       process.env.SPEECH_SERVICE_URL = "http://speech.internal:9999";
-      process.env.OLLAMA_URL = "http://ollama.internal:5555";
+      process.env.RUNPOD_ENDPOINT_ID = "runpod.internal-endpoint";
       const fetchMock = jest
         .spyOn(global, "fetch")
         .mockResolvedValue(HEALTHY_RESPONSE as Response);
@@ -118,7 +119,14 @@ describe("HealthController", () => {
       expect(urls).toContain("http://web.internal:4321");
       expect(urls).toContain("http://idp.internal:8080/realms/acme");
       expect(urls).toContain("http://speech.internal:9999/health");
-      expect(urls).toContain("http://ollama.internal:5555/api/tags");
+      expect(urls).toContain(
+        "https://api.runpod.ai/v2/runpod.internal-endpoint/health",
+      );
+      expect(fetchMock.mock.calls.find(([url]) =>
+        String(url).includes("runpod.internal-endpoint"),
+      )?.[1]).toMatchObject({
+        headers: { Authorization: "Bearer runpod-test-key" },
+      });
     });
 
     it("marks PostgreSQL unavailable and the overall health degraded when the database is down", async () => {
@@ -133,7 +141,7 @@ describe("HealthController", () => {
       expect(result.status).toBe("degraded");
     });
 
-    it("marks Ollama AI unavailable when the model service does not respond", async () => {
+    it("marks Runpod AI unavailable when the model service does not respond", async () => {
       jest.spyOn(global, "fetch").mockResolvedValue({ ok: false, status: 503 } as Response);
       const { controller } = createController();
 

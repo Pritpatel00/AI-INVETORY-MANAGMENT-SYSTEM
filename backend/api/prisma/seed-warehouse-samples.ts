@@ -166,10 +166,26 @@ async function main() {
     const product = products[index % products.length];
     const action = actions[index % actions.length];
     const source = locations.get(product.locationCode)!;
-    const transferTargets = ["MAIN-WH", "WAREHOUSE-1", "WAREHOUSE-2", "STOCK-ROOM", "STORE-ROOM"];
-    const destinationCode = transferTargets.find((code, targetIndex) => code !== product.locationCode && targetIndex === index % transferTargets.length)
-      ?? transferTargets.find((code) => code !== product.locationCode)!;
-    const destination = locations.get(destinationCode)!;
+    const transferTargets = [...locations.keys()].filter(
+  (code) => code !== product.locationCode,
+);
+
+if (transferTargets.length === 0) {
+  throw new Error(
+    `Sample seed configuration error: no transfer destination exists for "${product.locationCode}".`,
+  );
+}
+
+const destinationCode =
+  transferTargets[index % transferTargets.length];
+
+const destination = locations.get(destinationCode);
+
+if (!destination) {
+  throw new Error(
+    `Sample seed configuration error: destination location "${destinationCode}" was not found.`,
+  );
+}
     await ensureBalance(product.id, source.id, 120);
     if (action === InventoryAction.TRANSFER) await ensureBalance(product.id, destination.id, 0);
 
@@ -194,7 +210,7 @@ async function main() {
         : Number(((Math.abs(difference) / currentBalance.quantity) * 100).toFixed(2));
     const posted = status === TransactionStatus.POSTED;
     const reviewed = controlled && status !== TransactionStatus.PENDING;
-    const locationName = action === InventoryAction.RECEIVE ? source.name : source.name;
+    const locationName = source.name;
 
     const transaction = await prisma.inventoryTransaction.create({
       data: {
@@ -209,7 +225,13 @@ async function main() {
         referenceNumber: `SAMPLE-${createdAt.toISOString().slice(0, 10)}-${String(index + 1).padStart(2, "0")}`,
         notes: "Seven-day warehouse demonstration sample.",
         reviewNotes: reviewed ? `Sample manager decision: ${status.toLowerCase().replaceAll("_", " ")}.` : null,
-        transcript: transcriptFor(action, quantity, product.name, locationName, destination.name),
+       transcript: transcriptFor(
+  action,
+  quantity,
+  product.name,
+  locationName,
+  destination?.name ?? "",
+),
         systemQuantityBefore: controlled ? currentBalance.quantity : null,
         discrepancyDifference: difference,
         discrepancyPercentage: percentage,

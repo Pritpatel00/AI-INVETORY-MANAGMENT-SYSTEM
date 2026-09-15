@@ -4,7 +4,6 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { AlertTriangle, ArrowDownToLine, ArrowRightLeft, BellRing, Boxes, Camera, CheckCircle2, ChevronDown, ClipboardCheck, Clock3, FileClock, ImagePlus, LayoutDashboard, Mic, PackageMinus, RefreshCcw, Settings, ShieldCheck, Sparkles, Trash2, Volume2, X } from "lucide-react";
 import { mapTransactions, fetchInventorySnapshot, fetchInventoryTasks, startInventoryTask, completeInventoryTask, cancelInventoryTransaction, createPendingInventoryTransaction, confirmInventoryTransaction, extractInventoryDetails, transcribeAudio, uploadTransactionEvidence, type ApiProduct, type ApiLocation, type ApiTransaction, type ApiInventoryTask, type InventoryExtraction, type InventorySnapshot, type SpeechTranscription, type InventoryExtractionContext } from "../api/inventory-api";
 import { enqueueOfflineInventoryUpdate } from "../offline/offline-queue";
-import { getAuthenticatedDisplayName, keycloak } from "../auth/keycloak";
 import type { VoiceState } from "../types";
 import { formatAction, taskTypeLabel, formatTaskDue, formatClarificationValue, clarificationRetryHelp, STOCK_OUT_ACTIONS } from "../shared/helpers";
 import { MetricCard } from "../shared/MetricCard";
@@ -47,6 +46,8 @@ export function ExecutiveDashboard({
   syncState,
   onSignOut,
   onPendingTaskCountChange,
+  displayName,
+  offlineOwnerId,
 }: {
   page: string;
   onNavigate: (page: string) => void;
@@ -55,6 +56,8 @@ export function ExecutiveDashboard({
   syncState?: string;
   onSignOut?: () => void;
   onPendingTaskCountChange?: (count: number) => void;
+  displayName?: string;
+  offlineOwnerId?: string;
 }) {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [message, setMessage] = useState("");
@@ -269,7 +272,7 @@ export function ExecutiveDashboard({
     }
   }
 
-  const workerName = getAuthenticatedDisplayName() || "Warehouse Executive";
+  const workerName = displayName || "Warehouse Executive";
   const workerGreeting = (() => {
     const hour = clockNow.getHours();
     if (hour < 12) return "Good morning";
@@ -951,8 +954,11 @@ export function ExecutiveDashboard({
       if (networkUnavailable) {
         try {
           clientRequestIdRef.current ??= `voice-${crypto.randomUUID()}`;
+          if (!offlineOwnerId) {
+            throw new Error("A canonical user identity is required for offline storage.");
+          }
           await enqueueOfflineInventoryUpdate({
-            ownerId: keycloak.subject ?? "local-worker",
+            ownerId: offlineOwnerId,
             clientRequestId: clientRequestIdRef.current,
             extraction,
           });

@@ -41,7 +41,6 @@ import {
   type ProductInput,
   type LocationInput,
 } from "../api/inventory-api";
-import { getAuthenticatedDisplayName } from "../auth/keycloak";
 import { WarehouseHero } from "../shared/WarehouseHero";
 import { StatusPulse } from "../shared/AnimationUtils";
 import { AdministratorAuditTransactions } from "./AdministratorAuditTransactions";
@@ -50,10 +49,12 @@ export function AdministratorDashboard({
   managerMode = false,
   page = "Overview",
   onNavigate,
+  displayName,
 }: {
   managerMode?: boolean;
   page?: string;
   onNavigate?: (page: string) => void;
+  displayName?: string;
 }) {
   const [snapshot, setSnapshot] = useState<InventorySnapshot | null>(null);
   const [error, setError] = useState("");
@@ -524,7 +525,7 @@ export function AdministratorDashboard({
     return available < product.safetyStock;
   }).length;
 
-  const adminName = getAuthenticatedDisplayName() || "Administrator";
+  const adminName = displayName || "Administrator";
   const adminGreeting = (() => {
     const hour = clockNow.getHours();
     if (hour < 12) return "Good morning";

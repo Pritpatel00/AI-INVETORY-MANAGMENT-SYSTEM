@@ -66,6 +66,9 @@ function createPrismaMock() {
       if (where.email === "manager@keycloak.local") {
         return { id: "user-manager-1", role: "MANAGER" };
       }
+      if (where.email === "admin@keycloak.local") {
+        return { id: "user-admin-1", role: "ADMINISTRATOR" };
+      }
       return null;
     },
   );
@@ -338,7 +341,7 @@ describe("EvidenceService — access control", () => {
   test("transaction evidence list is returned to administrators", async () => {
     const { prisma, service, openTransaction } = createPrismaMock();
     openTransaction({ createdById: "user-other-worker" });
-    const administratorActor: AuthenticatedUser = {
+  const administratorActor: AuthenticatedUser = {
       subject: "sub-admin",
       username: "ad101",
       email: "admin@keycloak.local",

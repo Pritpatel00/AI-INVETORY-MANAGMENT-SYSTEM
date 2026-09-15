@@ -1,0 +1,19 @@
+{
+  "name": "AI Voice Inventory Management",
+  "short_name": "Inventory Management",
+  "description": "Secure voice-assisted inventory updates for warehouse executives and managers.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f6fa",
+  "theme_color": "#155eef",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

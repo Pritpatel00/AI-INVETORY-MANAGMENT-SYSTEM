@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { LogOut, Menu, ShieldCheck, Wifi, WifiOff, CloudUpload } from "lucide-react";
 
-import { initializeKeycloak, keycloak, canUseRole, getAuthenticatedDisplayName } from "./auth/keycloak";
-import { setInventoryAccessToken } from "./api/inventory-api";
+import { initializeKeycloak, keycloak } from "./auth/keycloak";
+import { fetchAuthenticatedUser, setInventoryAccessToken } from "./api/inventory-api";
 import type { Role } from "./types";
 
 import { formatRoleLabel, roleLabel, pageDescription, resolveManagerPage } from "./shared/helpers";
@@ -14,6 +14,8 @@ import { NotificationsBell } from "./shared/NotificationsBell";
 import { InventorySearch } from "./shared/InventorySearch";
 import { LoadingState } from "./shared/LoadingState";
 import { AuthenticationPage } from "./authentication/AuthenticationPage";
+import { ChangePasswordPage } from "./authentication/ChangePasswordPage";
+import { offlineOwnerForUser, useLocalAuth, userCanUseWorkspace, workspaceForUser } from "./auth/local-auth";
 import { useNetworkStatus, useOfflineSync } from "./hooks/useNetworkStatus";
 import { ExecutiveDashboard } from "./warehouse-executive/ExecutiveDashboard";
 import { FloatingVoiceAssistant } from "./FloatingVoiceAssistant";
@@ -23,71 +25,93 @@ import { ManagerDashboard } from "./manager/ManagerDashboard";
 import { AdministratorDashboard } from "./administrator/AdministratorDashboard";
 
 export default function InventoryApp() {
-  const [loggedIn, setLoggedIn] = useState(false);
   const [role, setRole] = useState<Role>("worker");
   const [activePage, setActivePage] = useState("Overview");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
-  const [displayName, setDisplayName] = useState("Inventory user");
+  const [sessionBlocked, setSessionBlocked] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState(0);
   const [pendingWorkerTasks, setPendingWorkerTasks] = useState(0);
+  const localAuth = useLocalAuth();
+  const { ready: localAuthReady, user, provider, error: localAuthError } = localAuth;
+  const loggedIn = Boolean(user) && !sessionBlocked;
+  const displayName = user?.displayName ?? "Inventory user";
+  const offlineOwnerId = user ? offlineOwnerForUser(user) : undefined;
+  const legacyOfflineOwnerIds = provider === "keycloak" && keycloak.subject ? [keycloak.subject] : [];
   const { isOnline, pendingSyncCount, syncState, setPendingSyncCount, setSyncState } = useNetworkStatus();
 
   const visiblePage = role === "manager" ? resolveManagerPage(activePage) : activePage;
   const showingWorkerInterface = role === "worker";
 
-  useOfflineSync(loggedIn, showingWorkerInterface, isOnline, pendingSyncCount, syncState, setPendingSyncCount, setSyncState);
+  useOfflineSync(
+    loggedIn,
+    showingWorkerInterface,
+    isOnline,
+    pendingSyncCount,
+    syncState,
+    setPendingSyncCount,
+    setSyncState,
+    offlineOwnerId,
+    legacyOfflineOwnerIds,
+  );
 
   useEffect(() => {
+    if (!localAuthReady) return;
     let active = true;
     let refreshTimer: number | undefined;
 
+    if (user) {
+      setRole(workspaceForUser(user));
+      setSessionBlocked(false);
+      setAuthReady(true);
+      return () => { active = false; };
+    }
+
     initializeKeycloak()
-      .then((authenticated) => {
+      .then(async (authenticated) => {
         if (!active) return;
         if (authenticated) {
-          const requestedRole =
-            (sessionStorage.getItem("nirka_requested_role") as Role | null) ?? "worker";
-          setInventoryAccessToken(keycloak.token);
-          setDisplayName(getAuthenticatedDisplayName());
-          if (canUseRole(requestedRole)) {
+          try {
+            setInventoryAccessToken(keycloak.token, "keycloak");
+            const canonicalUser = await fetchAuthenticatedUser();
+            if (!active) return;
+            localAuth.adoptExternalSession(canonicalUser);
+            const requestedRole =
+              (sessionStorage.getItem("nirka_requested_role") as Role | null) ??
+              workspaceForUser(canonicalUser);
             setRole(requestedRole);
-            setLoggedIn(true);
-          } else {
-            setAuthError("Your account is authenticated but does not have access to the selected role.");
-          }
-          refreshTimer = window.setInterval(() => {
-            keycloak
-              .updateToken(60)
-              .then(() => setInventoryAccessToken(keycloak.token))
-              .catch(() =>
-                // A single transient refresh failure (Keycloak momentarily
-                // busy, network hiccup) must not sign the worker out mid-
-                // update. Retry the refresh once; only a second consecutive
-                // failure — a genuinely rejected refresh grant — ends the
-                // session. The API client additionally reacquires the token
-                // and retries once on a 401, so the session survives brief
-                // expiry windows without weakening authentication.
-                keycloak
-                  .updateToken(60)
-                  .then(() => setInventoryAccessToken(keycloak.token))
-                  .catch(() => {
-                    setInventoryAccessToken();
-                    setLoggedIn(false);
-                    setAuthError(
-                      "Your secure session expired. Please sign in again.",
-                    );
-                  }),
+            if (userCanUseWorkspace(canonicalUser, requestedRole)) {
+              setSessionBlocked(false);
+              setAuthError("");
+            } else {
+              setSessionBlocked(true);
+              setAuthError(
+                `This account does not have ${formatRoleLabel(requestedRole)} access. Choose the ${formatRoleLabel(workspaceForUser(canonicalUser))} workspace.`,
               );
-          }, 30_000);
+            }
+            refreshTimer = window.setInterval(() => {
+              keycloak
+                .updateToken(60)
+                .then(() => setInventoryAccessToken(keycloak.token, "keycloak"))
+                .catch(() => {
+                  setInventoryAccessToken();
+                  localAuth.clearSession();
+                  setSessionBlocked(false);
+                  setAuthError("Your secure session expired. Please sign in again.");
+                });
+            }, 30_000);
+          } catch {
+            setInventoryAccessToken();
+            setAuthError("The authenticated user profile is unavailable. Please use another sign-in method.");
+          }
         }
         setAuthReady(true);
       })
       .catch(() => {
         if (!active) return;
-        setAuthError("The authentication service is unavailable. Start Keycloak and try again.");
+        setAuthError("Local sign-in is unavailable and legacy sign-in could not be checked.");
         setAuthReady(true);
       });
 
@@ -95,39 +119,76 @@ export default function InventoryApp() {
       active = false;
       if (refreshTimer) window.clearInterval(refreshTimer);
     };
-  }, []);
+  }, [localAuthReady]);
 
-  async function beginSecureLogin(employeeId: string) {
+  async function beginLocalLogin(identifier: string, password: string) {
+    setAuthError("");
+    localAuth.clearError();
+    sessionStorage.setItem("nirka_requested_role", role);
+    try {
+      const authenticatedUser = await localAuth.login(identifier, password);
+      if (!userCanUseWorkspace(authenticatedUser, role)) {
+        await localAuth.logout();
+        setSessionBlocked(true);
+        setAuthError(
+          `This account does not have ${formatRoleLabel(role)} access. Choose the ${formatRoleLabel(workspaceForUser(authenticatedUser))} workspace.`,
+        );
+        return;
+      }
+      setRole(workspaceForUser(authenticatedUser));
+      setSessionBlocked(false);
+      setAuthError("");
+    } catch (cause) {
+      setAuthError(cause instanceof Error ? cause.message : "Invalid credentials.");
+    }
+  }
+
+  async function beginLegacyLogin(identifier: string) {
     setAuthLoading(true);
     setAuthError("");
     sessionStorage.setItem("nirka_requested_role", role);
-
-    if (keycloak.authenticated) {
-      if (canUseRole(role)) {
-        setInventoryAccessToken(keycloak.token);
-        setDisplayName(getAuthenticatedDisplayName());
-        setLoggedIn(true);
-      } else {
-        setAuthError(`This account does not have ${formatRoleLabel(role)} access.`);
-      }
-      setAuthLoading(false);
-      return;
-    }
-
     try {
-      await keycloak.login({ redirectUri: window.location.origin, loginHint: employeeId || undefined });
+      if (keycloak.authenticated && keycloak.token) {
+        setInventoryAccessToken(keycloak.token, "keycloak");
+        const canonicalUser = await fetchAuthenticatedUser();
+        localAuth.adoptExternalSession(canonicalUser);
+        if (!userCanUseWorkspace(canonicalUser, role)) {
+          setSessionBlocked(true);
+          setAuthError(
+            `This account does not have ${formatRoleLabel(role)} access. Choose the ${formatRoleLabel(workspaceForUser(canonicalUser))} workspace.`,
+          );
+        } else {
+          setRole(workspaceForUser(canonicalUser));
+          setSessionBlocked(false);
+        }
+      } else {
+        await keycloak.login({
+          redirectUri: window.location.origin,
+          loginHint: identifier || undefined,
+        });
+      }
     } catch {
-      setAuthError("Secure sign-in could not be started. Please try again.");
+      setInventoryAccessToken();
+      setAuthError("Legacy sign-in could not be started. Please try local sign-in or try again.");
+    } finally {
       setAuthLoading(false);
     }
   }
 
-  function signOut() {
-    setInventoryAccessToken();
-    setLoggedIn(false);
+  async function signOut() {
+    const wasKeycloak = provider === "keycloak";
+    if (wasKeycloak) {
+      setInventoryAccessToken();
+      localAuth.clearSession();
+    } else {
+      await localAuth.logout();
+    }
+    setSessionBlocked(false);
     setActivePage("Overview");
     sessionStorage.removeItem("nirka_requested_role");
-    void keycloak.logout({ redirectUri: window.location.origin });
+    if (wasKeycloak && keycloak.authenticated) {
+      void keycloak.logout({ redirectUri: window.location.origin });
+    }
   }
 
   if (!authReady) return <LoadingState />;
@@ -137,9 +198,30 @@ export default function InventoryApp() {
       <AuthenticationPage
         role={role}
         setRole={(nextRole) => { setRole(nextRole); setActivePage("Overview"); }}
-        onLogin={(employeeId) => void beginSecureLogin(employeeId)}
-        authError={authError}
-        isLoading={authLoading}
+        onLogin={(identifier, password) => void beginLocalLogin(identifier, password)}
+        onLegacyLogin={(identifier) => void beginLegacyLogin(identifier)}
+        authError={authError || localAuthError}
+        isLoading={authLoading || localAuth.loading}
+      />
+    );
+  }
+
+  if (provider === "local" && user?.mustChangePassword) {
+    return (
+      <ChangePasswordPage
+        displayName={displayName}
+        onSubmit={(currentPassword, newPassword) => {
+          void localAuth.changePassword(currentPassword, newPassword)
+            .then((updatedUser) => {
+              setRole(workspaceForUser(updatedUser));
+              setAuthError("");
+            })
+            .catch((cause) => {
+              setAuthError(cause instanceof Error ? cause.message : "Password change failed.");
+            });
+        }}
+        authError={authError || localAuthError}
+        isLoading={localAuth.loading}
       />
     );
   }
@@ -289,11 +371,13 @@ export default function InventoryApp() {
               syncState={syncState}
               onSignOut={signOut}
               onPendingTaskCountChange={setPendingWorkerTasks}
+              displayName={displayName}
+              offlineOwnerId={offlineOwnerId}
             />
           ) : role === "manager" ? (
             <ManagerDashboard key={visiblePage} page={visiblePage} onNavigate={setActivePage} onPendingApprovalsChange={setPendingApprovals} />
           ) : (
-            <AdministratorDashboard page={visiblePage} onNavigate={setActivePage} />
+            <AdministratorDashboard page={visiblePage} onNavigate={setActivePage} displayName={displayName} />
           )}
         </div>
       </div>

@@ -10,7 +10,7 @@ distinct response format:
 
 ```text
 Speak  ->  1. Transcription   ->  2. AI extraction   ->  3. Clarification (if needed)
-              (Whisper)            (Qwen 3 / Ollama)      (voice Q&A loop)
+              (Whisper)            (Qwen 3 / Runpod)      (voice Q&A loop)
                                     ->  4. Confirmation  ->  5. Outcome / Error
 ```
 
@@ -76,7 +76,7 @@ The worker speaks → browser records → `POST /api/speech/transcribe` returns:
 If no clear speech is detected the page answers: “No clear speech was
 detected. Record again in a quieter area.”
 
-## 3. Response format — AI extraction (Qwen 3 / Ollama)
+## 3. Response format — AI extraction (Qwen 3 / Runpod)
 
 The reviewed transcript is sent to `POST /api/ai/extract-inventory` and the
 system answers with a complete structured proposal:
@@ -85,7 +85,7 @@ system answers with a complete structured proposal:
 {
   "transcript": "Received five units of item 402 at shelf B from supplier X.",
   "evidenceId": "b6abf8ce-a21f-43a0-83ef-3fd546cf95a4",
-  "model": "qwen3:4b",
+  "model": "Qwen/Qwen3-4B",
   "readyForConfirmation": true,
   "requiresManagerReview": false,
   "confidence": 0.933,
@@ -233,7 +233,7 @@ app turns it into a short sentence shown on the page.
 | Invalid language hint | `400` “Language must be a two-letter code such as 'en'.” |
 | Evidence belongs to another user | `400` “The voice evidence does not belong to this user.” |
 | Speech service is down | `503` “The local speech-to-text service is unavailable.” |
-| Ollama AI is down | `503` “The local Ollama AI service is unavailable.” |
+| Runpod AI is down | `503` “The Runpod AI service is unavailable.” |
 | Model returned invalid JSON | `502` “The AI model returned information in an invalid format.” |
 | User profile unavailable | `503` “The authenticated inventory user profile is unavailable.” |
 

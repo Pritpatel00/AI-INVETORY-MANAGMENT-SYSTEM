@@ -105,10 +105,17 @@ const extractionJsonSchema = {
   ],
 } as const;
 
-interface OllamaChatResponse {
-  model: string;
-  message?: { content?: string };
-  total_duration?: number;
+interface RunpodVllmResponse {
+  model?: string;
+  status?: string;
+  error?: string;
+  output?: Array<{
+    choices?: Array<{
+      tokens?: string[];
+      text?: string;
+      message?: { content?: string };
+    }>;
+  }> | string;
 }
 
 function envNumber(name: string, fallback: number) {
@@ -118,26 +125,18 @@ function envNumber(name: string, fallback: number) {
 
 @Injectable()
 export class AiService {
-  private readonly ollamaUrl =
-    process.env.OLLAMA_URL ?? "http://127.0.0.1:11434";
-  private readonly ollamaModel = process.env.OLLAMA_MODEL ?? "qwen3:4b";
-  // How long Ollama keeps the model loaded after a request. A short value
-  // causes a cold model reload on the next extraction, which is the most
-  // common cause of slow AI responses. Use a valid Ollama duration such as
-  // "30m" to keep it warm between warehouse commands.
-  private readonly ollamaKeepAlive =
-    process.env.OLLAMA_KEEP_ALIVE ?? "30m";
+  private readonly runpodApiKey = process.env.RUNPOD_API_KEY?.trim();
+  private readonly runpodEndpointId = process.env.RUNPOD_ENDPOINT_ID?.trim();
+  private readonly runpodModel =
+    process.env.RUNPOD_MODEL?.trim() || "Qwen/Qwen3-4B";
   // The extraction JSON is small, so capping output tokens avoids wasting time
   // on a long tail. The structured-output schema already bounds the answer, and
   // the default leaves comfortable headroom for the free-text notes field.
-  private readonly ollamaNumPredict = envNumber("OLLAMA_NUM_PREDICT", 256);
-  // Bounds the context window (Qwen3's native context can be 32k tokens), which
-  // reduces memory and speeds up generation on CPU while fitting the catalog
-  // prompt easily.
-  private readonly ollamaNumCtx = envNumber("OLLAMA_NUM_CTX", 2048);
-  // Optional CPU thread count; Ollama decides automatically when unset.
-  private readonly ollamaNumThreads =
-    envNumber("OLLAMA_NUM_THREADS", 0) || undefined;
+  private readonly runpodNumPredict = envNumber("RUNPOD_NUM_PREDICT", 256);
+  // Runpod exposes this as a prompt truncation limit for the vLLM worker. The
+  // endpoint itself should also be configured with MAX_MODEL_LEN large enough
+  // for this prompt limit plus the generated response.
+  private readonly runpodNumCtx = envNumber("RUNPOD_NUM_CTX", 2048);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -263,52 +262,76 @@ export class AiService {
       `Transcript: ${JSON.stringify(transcript)}`,
     ].join("\n");
 
+    if (!this.runpodApiKey || !this.runpodEndpointId) {
+      throw new ServiceUnavailableException(
+        "The Runpod AI service is unavailable.",
+      );
+    }
+
     let response: Response;
     try {
-      response = await fetch(`${this.ollamaUrl}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: this.ollamaModel,
-          stream: false,
-          think: false,
-          keep_alive: this.ollamaKeepAlive,
-          format: extractionJsonSchema,
-          options: {
-            temperature: 0,
-            seed: 42,
-            num_predict: this.ollamaNumPredict,
-            num_ctx: this.ollamaNumCtx,
-            ...(this.ollamaNumThreads
-              ? { num_thread: this.ollamaNumThreads }
-              : {}),
+      response = await fetch(
+        `https://api.runpod.ai/v2/${encodeURIComponent(this.runpodEndpointId)}/runsync`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.runpodApiKey}`,
+            "Content-Type": "application/json",
           },
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are a careful warehouse data extraction service. Do not make inventory decisions and do not invent missing data.",
+          body: JSON.stringify({
+            input: {
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "You are a careful warehouse data extraction service. Do not make inventory decisions and do not invent missing data.",
+                },
+                { role: "user", content: prompt },
+              ],
+              sampling_params: {
+                temperature: 0,
+                seed: 42,
+                max_tokens: this.runpodNumPredict,
+                truncate_prompt_tokens: this.runpodNumCtx,
+                chat_template_kwargs: { enable_thinking: false },
+                structured_outputs: { json: extractionJsonSchema },
+              },
             },
-            { role: "user", content: prompt },
-          ],
-        }),
-        signal: AbortSignal.timeout(120_000),
-      });
+          }),
+          signal: AbortSignal.timeout(120_000),
+        },
+      );
     } catch {
       throw new ServiceUnavailableException(
-        "The local Ollama AI service is unavailable.",
+        "The Runpod AI service is unavailable.",
       );
     }
 
     if (!response.ok) {
-      const details = await response.text();
       throw new BadGatewayException(
-        `AI extraction failed with status ${response.status}: ${details}`,
+        `Runpod AI extraction failed with status ${response.status}.`,
       );
     }
 
-    const ollamaResponse = (await response.json()) as OllamaChatResponse;
-    const content = ollamaResponse.message?.content;
+    const runpodResponse = (await response.json()) as RunpodVllmResponse;
+    if (
+      runpodResponse.status &&
+      runpodResponse.status.toUpperCase() !== "COMPLETED"
+    ) {
+      throw new BadGatewayException(
+        `Runpod AI extraction completed with status ${runpodResponse.status}.`,
+      );
+    }
+
+    const output = runpodResponse.output;
+    const firstOutput = Array.isArray(output) ? output[0] : undefined;
+    const firstChoice = firstOutput?.choices?.[0];
+    const content =
+      typeof output === "string"
+        ? output
+        : firstChoice?.tokens?.join("") ||
+          firstChoice?.text ||
+          firstChoice?.message?.content;
     if (!content) {
       throw new BadGatewayException("The AI model returned no extraction.");
     }
@@ -564,7 +587,7 @@ export class AiService {
     return {
       transcript,
       evidenceId: input.evidenceId ?? null,
-      model: ollamaResponse.model || this.ollamaModel,
+      model: runpodResponse.model || this.runpodModel,
       readyForConfirmation:
         missingFields.length === 0 && lowConfidenceFields.length === 0,
       requiresManagerReview:

@@ -132,6 +132,6 @@ npm run speech:verify
 
 ## Relationship to AI extraction
 
-The reviewed transcript is passed to the controlled Qwen 3 and Ollama
+The reviewed transcript is passed to the controlled Qwen 3 Runpod Serverless
 extraction flow described in `AI_EXTRACTION.md`. Speech recognition produces
 text only; it cannot update inventory by itself.

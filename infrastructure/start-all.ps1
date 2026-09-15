@@ -105,14 +105,12 @@ try {
         $managed.Speech = Get-ListeningProcessId -Port 5001
     }
 
-    $ollamaCommand = Get-Command ollama -ErrorAction SilentlyContinue
-    if (-not $ollamaCommand) { throw "Ollama is not installed or is unavailable in PATH." }
-    if (-not (Assert-PortAvailableOrHealthy -Name "Ollama AI" -Port 11434 -HealthUrl "http://127.0.0.1:11434/api/tags")) {
-        $ollamaProcess = Start-ManagedProcess -Name "Ollama AI" -FilePath $ollamaCommand.Source -ArgumentList @("serve") -WorkingDirectory $projectRoot -LogName "ollama"
-        $managed.Ollama = $ollamaProcess.Id
-        Wait-ForEndpoint -Name "Ollama AI" -Url "http://127.0.0.1:11434/api/tags" -Port 11434 -Attempts 60
+    if ($env:RUNPOD_API_KEY -and $env:RUNPOD_ENDPOINT_ID) {
+        & (Join-Path $PSScriptRoot "check-local-ai.ps1")
     }
-    & (Join-Path $PSScriptRoot "check-local-ai.ps1")
+    else {
+        Write-Host "[skip] Runpod AI health check (RUNPOD_API_KEY/RUNPOD_ENDPOINT_ID not set)." -ForegroundColor DarkYellow
+    }
 
     if (Get-ListeningProcessId -Port 4000) {
         if (-not (Test-HttpEndpoint -Url "http://127.0.0.1:4000/api/health")) {

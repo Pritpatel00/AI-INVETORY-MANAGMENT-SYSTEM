@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { keycloak } from "../auth/keycloak";
 
 export interface NetworkStatusState {
   isOnline: boolean;
@@ -58,21 +57,27 @@ export function useOfflineSync(
   syncState: "idle" | "syncing" | "complete" | "error",
   setPendingSyncCount: (count: number) => void,
   setSyncState: (state: "idle" | "syncing" | "complete" | "error") => void,
+  ownerId?: string,
+  legacyOwnerIds: string[] = [],
 ) {
   useEffect(() => {
-    if (!loggedIn || !showingWorkerInterface) {
+    if (!loggedIn || !showingWorkerInterface || !ownerId) {
       setPendingSyncCount(0);
       setSyncState("idle");
       return;
     }
 
-    const ownerId = keycloak.subject ?? "local-worker";
     let active = true;
     let syncing = false;
 
     const refreshAndSynchronize = async () => {
       try {
-        const { countOfflineInventoryUpdates, synchronizeOfflineInventoryUpdates } = await import("../offline/offline-queue");
+        const {
+          countOfflineInventoryUpdates,
+          migrateOfflineInventoryOwner,
+          synchronizeOfflineInventoryUpdates,
+        } = await import("../offline/offline-queue");
+        await migrateOfflineInventoryOwner(ownerId.slice("nirka-user:".length), legacyOwnerIds);
         const queued = await countOfflineInventoryUpdates(ownerId);
         if (!active) return;
         setPendingSyncCount(queued);
@@ -109,5 +114,5 @@ export function useOfflineSync(
 
     const cleanup = setup();
     return () => { void cleanup.then((fn) => fn()); };
-  }, [isOnline, loggedIn, showingWorkerInterface, setPendingSyncCount, setSyncState]);
+  }, [isOnline, loggedIn, showingWorkerInterface, ownerId, legacyOwnerIds.join(","), setPendingSyncCount, setSyncState]);
 }

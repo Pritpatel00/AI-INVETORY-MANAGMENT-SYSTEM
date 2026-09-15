@@ -16,10 +16,13 @@ import {
   TaskStatus,
   TaskType,
   TransactionStatus,
-  UserRole,
 } from "@prisma/client";
 
 import type { AuthenticatedUser } from "../auth/auth-user";
+import {
+  hasApplicationRole,
+  resolveCanonicalUser,
+} from "../auth/canonical-user";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateTransactionDto } from "./dto/create-transaction.dto";
 import {
@@ -3192,47 +3195,8 @@ export class InventoryService {
     });
   }
 
-  private async resolveUser(
-    actor: AuthenticatedUser,
-  ) {
-    const email =
-      actor.email?.toLowerCase();
-
-    const existing = email
-      ? await this.prisma.user.findUnique({
-          where: {
-            email,
-          },
-        })
-      : await this.prisma.user.findUnique({
-          where: {
-            employeeId:
-              actor.username.toUpperCase(),
-          },
-        });
-
-    if (existing) {
-      return existing;
-    }
-
-    const role =
-      actor.roles.includes("administrator")
-        ? UserRole.ADMINISTRATOR
-        : actor.roles.includes("manager")
-          ? UserRole.MANAGER
-          : UserRole.WORKER;
-
-    return this.prisma.user.create({
-      data: {
-        employeeId:
-          actor.username.toUpperCase(),
-        email:
-          email ??
-          `${actor.username}@keycloak.local`,
-        displayName: actor.username,
-        role,
-      },
-    });
+  private async resolveUser(actor: AuthenticatedUser) {
+    return resolveCanonicalUser(this.prisma, actor);
   }
 
   private assertTransactionAccess(
@@ -3255,10 +3219,7 @@ export class InventoryService {
   private hasManagerAccess(
     actor: AuthenticatedUser,
   ) {
-    return (
-      actor.roles.includes("manager") ||
-      actor.roles.includes("administrator")
-    );
+    return hasApplicationRole(actor, ["manager", "administrator"]);
   }
 
   private assertManagerAccess(
@@ -3276,9 +3237,7 @@ export class InventoryService {
   private assertAdministratorAccess(
     actor: AuthenticatedUser,
   ) {
-    if (
-      actor.roles.includes("administrator")
-    ) {
+    if (hasApplicationRole(actor, ["administrator"])) {
       return;
     }
 

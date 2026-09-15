@@ -1,25 +1,22 @@
 $ErrorActionPreference = "Stop"
 
-$model = "qwen3:4b"
-$ollamaCommand = Get-Command ollama -ErrorAction SilentlyContinue
-if (-not $ollamaCommand) {
-    throw "Ollama is not installed or is not available in PATH."
+$model = if ($env:RUNPOD_MODEL) { $env:RUNPOD_MODEL } else { "Qwen/Qwen3-4B" }
+$endpointId = if ($env:RUNPOD_ENDPOINT_ID) { $env:RUNPOD_ENDPOINT_ID.Trim() } else { "" }
+$apiKey = if ($env:RUNPOD_API_KEY) { $env:RUNPOD_API_KEY.Trim() } else { "" }
+if (-not $endpointId -or -not $apiKey) {
+    throw "RUNPOD_ENDPOINT_ID and RUNPOD_API_KEY must be set to check Runpod AI."
 }
 
 try {
-    $tags = Invoke-RestMethod `
+    Invoke-WebRequest `
         -Method Get `
-        -Uri "http://127.0.0.1:11434/api/tags" `
+        -Uri "https://api.runpod.ai/v2/$endpointId/health" `
+        -Headers @{ Authorization = "Bearer $apiKey" } `
         -TimeoutSec 10
 }
 catch {
-    throw "Ollama is installed but its local service is not running."
+    throw "Runpod AI endpoint '$endpointId' is not reachable or is not healthy."
 }
 
-$availableModels = @($tags.models | ForEach-Object { $_.name })
-if ($availableModels -notcontains $model) {
-    throw "The required local model '$model' is not installed. Run: ollama pull $model"
-}
-
-Write-Host "Ollama is ready."
+Write-Host "Runpod AI is ready."
 Write-Host "Inventory extraction model: $model"

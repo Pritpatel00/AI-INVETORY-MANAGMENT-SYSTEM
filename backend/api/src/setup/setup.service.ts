@@ -12,6 +12,11 @@ import {
 } from "@prisma/client";
 
 import type { AuthenticatedUser } from "../auth/auth-user";
+import {
+  getAuthenticatedEmail,
+  getAuthenticatedEmployeeId,
+  resolveCanonicalUser,
+} from "../auth/canonical-user";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateSetupAssignmentDto } from "./dto/create-setup-assignment.dto";
 import { CreateSetupOpeningStockDto } from "./dto/create-setup-opening-stock.dto";
@@ -217,7 +222,7 @@ export class SetupService {
     if (!target) {
       throw new NotFoundException("Active Warehouse Executive not found.");
     }
-    if (actor.email && target.email === actor.email.toLowerCase()) {
+    if (getAuthenticatedEmail(actor) && target.email === getAuthenticatedEmail(actor)) {
       throw new ForbiddenException("A Manager cannot assign their own account.");
     }
 
@@ -236,8 +241,8 @@ export class SetupService {
     await this.prisma.userAccessAudit.create({
       data: {
         action: "WORKER_ASSIGNED",
-        actorUsername: actor.username,
-        actorEmail: actor.email?.toLowerCase() ?? null,
+        actorUsername: getAuthenticatedEmployeeId(actor),
+        actorEmail: getAuthenticatedEmail(actor) ?? null,
         targetUserId: target.id,
         targetEmployeeId: target.employeeId,
         targetDisplayName: target.displayName,
@@ -249,26 +254,6 @@ export class SetupService {
   }
 
   private async resolveUser(actor: AuthenticatedUser) {
-    const email = actor.email?.toLowerCase();
-    const existing = email
-      ? await this.prisma.user.findUnique({ where: { email } })
-      : await this.prisma.user.findUnique({
-          where: { employeeId: actor.username.toUpperCase() },
-        });
-    if (existing) return existing;
-
-    const role = actor.roles.includes("administrator")
-      ? UserRole.ADMINISTRATOR
-      : actor.roles.includes("manager")
-        ? UserRole.MANAGER
-        : UserRole.WORKER;
-    return this.prisma.user.create({
-      data: {
-        employeeId: actor.username.toUpperCase(),
-        email: email ?? `${actor.username.toLowerCase()}@keycloak.local`,
-        displayName: actor.username,
-        role,
-      },
-    });
+    return resolveCanonicalUser(this.prisma, actor);
   }
 }

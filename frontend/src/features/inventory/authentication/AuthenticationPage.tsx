@@ -7,12 +7,13 @@ import { RoleSelector } from "./RoleSelector";
 interface AuthenticationPageProps {
   role: Role;
   setRole: (role: Role) => void;
-  onLogin: (employeeId: string) => void;
+  onLogin: (identifier: string, password: string) => void;
+  onLegacyLogin: (identifier: string) => void;
   authError: string;
   isLoading: boolean;
 }
 
-export function AuthenticationPage({ role, setRole, onLogin, authError, isLoading }: AuthenticationPageProps) {
+export function AuthenticationPage({ role, setRole, onLogin, onLegacyLogin, authError, isLoading }: AuthenticationPageProps) {
   return (
     <main className="login-stage min-h-screen px-5 py-8 text-[#17345f] md:grid md:place-items-center">
       <div className="login-shell mx-auto grid min-h-[calc(100vh-4rem)] max-w-[1120px] overflow-hidden rounded-[30px] border border-white bg-white shadow-[0_30px_80px_rgba(15,45,85,0.14)] md:min-h-[680px] md:grid-cols-[1.05fr_0.95fr]">
@@ -56,31 +57,47 @@ export function AuthenticationPage({ role, setRole, onLogin, authError, isLoadin
             <div className="mb-10 md:hidden"><Brand /></div>
             <p className="text-xs font-extrabold uppercase tracking-[0.17em] text-[#155eef]">Secure access</p>
             <h2 className="mt-3 text-[32px] font-extrabold tracking-[-0.04em] text-[#102a56]">Welcome back</h2>
-            <p className="mt-2 text-sm leading-6 text-[#7489a7]">Select your role, then sign in to open the correct workspace.</p>
+            <p className="mt-2 text-sm leading-6 text-[#7489a7]">Select a workspace, then sign in. Your PostgreSQL account role controls access.</p>
 
             <form
               className="mt-8 space-y-5"
               onSubmit={(event) => {
                 event.preventDefault();
                 const formData = new FormData(event.currentTarget);
-                onLogin(String(formData.get("employeeId") ?? ""));
+                onLogin(
+                  String(formData.get("employeeId") ?? ""),
+                  String(formData.get("password") ?? ""),
+                );
               }}
             >
               <fieldset>
-                <legend className="mb-2 text-sm font-bold text-[#29466f]">Continue as</legend>
+                <legend className="mb-2 text-sm font-bold text-[#29466f]">Workspace</legend>
                 <RoleSelector role={role} setRole={setRole} />
               </fieldset>
               <label className="block">
-                <span className="mb-2 block text-sm font-bold text-[#29466f]">Employee ID</span>
+                <span className="mb-2 block text-sm font-bold text-[#29466f]">Employee ID or email</span>
                 <div className="flex items-center gap-3 rounded-xl border border-[#dce5f1] bg-[#fbfcfe] px-4 focus-within:border-[#6f9cff] focus-within:ring-4 focus-within:ring-[#e7efff]">
                   <UserRound size={18} className="text-[#7890b0]" />
                   <input
-                    aria-label="Employee ID"
+                    aria-label="Employee ID or email"
                     name="employeeId"
-                    placeholder="worker1, manager1 or admin1"
+                    autoComplete="username"
+                    required
+                    placeholder="worker1 or name@example.com"
                     className="h-12 w-full bg-transparent text-sm font-semibold text-[#17345f] outline-none"
                   />
                 </div>
+              </label>
+              <label className="block">
+                <span className="mb-2 block text-sm font-bold text-[#29466f]">Password</span>
+                <input
+                  aria-label="Password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  className="h-12 w-full rounded-xl border border-[#dce5f1] bg-[#fbfcfe] px-4 text-sm font-semibold text-[#17345f] outline-none focus:border-[#6f9cff] focus:ring-4 focus:ring-[#e7efff]"
+                />
               </label>
               {authError && (
                 <div className="rounded-xl border border-[#ffd1d1] bg-[#fff2f2] px-4 py-3 text-sm font-semibold text-[#a73737]">
@@ -92,13 +109,30 @@ export function AuthenticationPage({ role, setRole, onLogin, authError, isLoadin
                 disabled={isLoading}
                 className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#155eef] text-sm font-extrabold text-white shadow-[0_12px_28px_rgba(21,94,239,0.26)] transition hover:bg-[#0f4fd4] disabled:cursor-wait disabled:opacity-65"
               >
-                {isLoading ? "Checking secure access\u2026" : `Continue as ${formatRoleLabel(role)}`}
+                {isLoading ? "Signing in securely\u2026" : `Sign in to ${formatRoleLabel(role)}`}
                 <ChevronDown size={17} className="-rotate-90" />
               </button>
             </form>
+            <div className="my-5 flex items-center gap-3 text-[11px] font-bold uppercase tracking-[0.12em] text-[#9aacbf]">
+              <span className="h-px flex-1 bg-[#e7edf5]" />
+              <span>Legacy access</span>
+              <span className="h-px flex-1 bg-[#e7edf5]" />
+            </div>
+            <button
+              type="button"
+              disabled={isLoading}
+              onClick={() => {
+                const form = document.querySelector<HTMLFormElement>("form");
+                const identifier = String(new FormData(form ?? undefined).get("employeeId") ?? "");
+                onLegacyLogin(identifier);
+              }}
+              className="h-11 w-full rounded-xl border border-[#cdd9e9] bg-white text-sm font-extrabold text-[#35577f] transition hover:border-[#9db6d9] hover:bg-[#f7faff] disabled:cursor-wait disabled:opacity-65"
+            >
+              Continue with legacy Keycloak sign-in
+            </button>
             <div className="mt-7 flex items-center justify-center gap-2 rounded-xl bg-[#f4f8fd] px-4 py-3 text-center text-xs font-semibold text-[#6c82a2]">
               <ShieldCheck size={16} className="text-[#16865b]" />
-              Your password is entered securely in Keycloak and is never stored by this application.
+              Local passwords are securely hashed by the API. Legacy Keycloak sign-in remains available during migration.
             </div>
           </div>
         </section>

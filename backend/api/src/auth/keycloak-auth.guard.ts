@@ -1,6 +1,7 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from "@nestjs/common";
@@ -13,6 +14,7 @@ import { decode, type JwtPayload, verify } from "jsonwebtoken";
 import * as jwksClient from "jwks-rsa";
 
 import type { AuthenticatedRequest } from "./auth-user";
+import { LocalJwtService } from "./local-jwt.service";
 import { IS_PUBLIC_KEY } from "./public.decorator";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -21,6 +23,19 @@ type KeycloakPayload = JwtPayload & {
   email?: string;
   realm_access?: { roles?: string[] };
 };
+
+const CANONICAL_USER_SELECT = {
+  id: true,
+  employeeId: true,
+  email: true,
+  displayName: true,
+  role: true,
+  active: true,
+  lastLoginAt: true,
+  mustChangePassword: true,
+  authVersion: true,
+  legacyKeycloakSubject: true,
+} as const;
 
 @Injectable()
 export class KeycloakAuthGuard implements CanActivate {
@@ -39,6 +54,7 @@ export class KeycloakAuthGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly prisma: PrismaService,
+    private readonly localJwt: LocalJwtService,
   ) {}
 
   async canActivate(context: ExecutionContext) {
@@ -56,9 +72,13 @@ export class KeycloakAuthGuard implements CanActivate {
       throw new UnauthorizedException("A valid access token is required.");
     }
 
+    const decoded = decode(token, { complete: true });
+    if (decoded && typeof decoded !== "string" && decoded.header.alg === "HS256") {
+      return this.authenticateLocalToken(token, request);
+    }
+
     let payload: KeycloakPayload;
     try {
-      const decoded = decode(token, { complete: true });
       const keyId = decoded?.header.kid;
       if (!keyId) throw new Error("Token key id is missing.");
 
@@ -73,18 +93,8 @@ export class KeycloakAuthGuard implements CanActivate {
       throw new UnauthorizedException("The access token is invalid or expired.");
     }
 
-    const username = payload.preferred_username ?? "unknown";
-    const email = payload.email?.toLowerCase();
-    const applicationUser = await this.prisma.user.findFirst({
-      where: {
-        OR: [
-          { employeeId: username.toUpperCase() },
-          ...(email ? [{ email }] : []),
-        ],
-      },
-      select: { id: true, active: true, lastLoginAt: true },
-    });
-    if (applicationUser?.active === false) {
+    const applicationUser = await this.resolveKeycloakUser(payload);
+    if (!applicationUser.active) {
       throw new UnauthorizedException("This user account has been deactivated.");
     }
     if (
@@ -100,10 +110,124 @@ export class KeycloakAuthGuard implements CanActivate {
 
     request.authUser = {
       subject: payload.sub ?? "",
-      username,
-      email: payload.email,
-      roles: payload.realm_access?.roles ?? [],
+      username: applicationUser.employeeId,
+      employeeId: applicationUser.employeeId,
+      email: applicationUser.email,
+      displayName: applicationUser.displayName,
+      role: applicationUser.role,
+      // The PostgreSQL role is authoritative. Keycloak realm roles are not
+      // copied into the request because they must never authorize an action.
+      roles: [applicationUser.role.toLowerCase()],
+      provider: "keycloak",
+      userId: applicationUser.id,
+      mustChangePassword: applicationUser.mustChangePassword,
+      active: applicationUser.active,
     };
     return true;
+  }
+
+  private async resolveKeycloakUser(payload: KeycloakPayload) {
+    const username = payload.preferred_username?.trim().toUpperCase();
+    const email = payload.email?.trim().toLowerCase();
+
+    let applicationUser = payload.sub
+      ? await this.prisma.user.findUnique({
+          where: { legacyKeycloakSubject: payload.sub },
+          select: CANONICAL_USER_SELECT,
+        })
+      : null;
+
+    if (!applicationUser && username) {
+      applicationUser = await this.prisma.user.findUnique({
+        where: { employeeId: username },
+        select: CANONICAL_USER_SELECT,
+      });
+    }
+    if (!applicationUser && email) {
+      applicationUser = await this.prisma.user.findUnique({
+        where: { email },
+        select: CANONICAL_USER_SELECT,
+      });
+    }
+    if (!applicationUser) {
+      throw new UnauthorizedException(
+        "The authenticated inventory user profile is unavailable.",
+      );
+    }
+
+    if (payload.sub && !applicationUser.legacyKeycloakSubject) {
+      await this.prisma.user.update({
+        where: { id: applicationUser.id },
+        data: { legacyKeycloakSubject: payload.sub },
+      });
+    }
+
+    return applicationUser;
+  }
+
+  private async authenticateLocalToken(
+    token: string,
+    request: AuthenticatedRequest,
+  ): Promise<boolean> {
+    const claims = this.localJwt.verifyAccessToken(token);
+    const [user, session] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: claims.sub },
+        select: CANONICAL_USER_SELECT,
+      }),
+      this.prisma.authSession.findUnique({
+        where: { id: claims.sid },
+        select: {
+          id: true,
+          userId: true,
+          expiresAt: true,
+          revokedAt: true,
+        },
+      }),
+    ]);
+    if (
+      !user ||
+      !session ||
+      session.revokedAt ||
+      session.expiresAt <= new Date() ||
+      session.userId !== user.id ||
+      !user.active ||
+      user.authVersion !== claims.av
+    ) {
+      throw new UnauthorizedException("The local session is no longer active.");
+    }
+
+    if (
+      user.mustChangePassword &&
+      !this.isForcedPasswordPath(request.path)
+    ) {
+      throw new ForbiddenException("A password change is required.");
+    }
+
+    request.authUser = {
+      subject: user.id,
+      userId: user.id,
+      username: user.employeeId,
+      employeeId: user.employeeId,
+      email: user.email,
+      displayName: user.displayName,
+      role: user.role,
+      roles: [user.role.toLowerCase()],
+      provider: "local",
+      sessionId: session.id,
+      authVersion: user.authVersion,
+      mustChangePassword: user.mustChangePassword,
+      active: user.active,
+    };
+    return true;
+  }
+
+  private isForcedPasswordPath(path: string): boolean {
+    return [
+      "/auth/me",
+      "/auth/change-password",
+      "/auth/logout",
+      "/auth/refresh",
+    ].some((allowedPath) => path.endsWith(allowedPath));
   }
 }

@@ -34,7 +34,7 @@
     "speech:setup": "powershell -ExecutionPolicy Bypass -File infrastructure/setup-local-speech.ps1",
     "speech:local:start": "powershell -ExecutionPolicy Bypass -File infrastructure/start-local-speech.ps1",
     "speech:verify": "powershell -ExecutionPolicy Bypass -File infrastructure/verify-local-speech.ps1",
-    "ai:local:check": "powershell -ExecutionPolicy Bypass -File infrastructure/check-local-ai.ps1",
+    "ai:runpod:check": "powershell -ExecutionPolicy Bypass -File infrastructure/check-local-ai.ps1",
     "ai:verify": "powershell -ExecutionPolicy Bypass -File infrastructure/verify-local-ai.ps1",
     "ai:verify:clarification": "powershell -ExecutionPolicy Bypass -File infrastructure/verify-clarification-polishing.ps1",
     "workflow:verify": "powershell -ExecutionPolicy Bypass -File infrastructure/verify-confirmation-review.ps1",

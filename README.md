@@ -13,7 +13,7 @@ Milestone 8 reorder controls are complete. The application now includes:
 - protected local speech-to-text using faster-whisper;
 - an editable transcript before any inventory action;
 - stored voice evidence and database audit references;
-- local Qwen 3 extraction through Ollama;
+- Runpod Serverless vLLM extraction with Qwen/Qwen3-4B;
 - controlled action, item, quantity, location, condition and reference fields;
 - one-question-at-a-time voice clarification when information is missing or
   uncertain;
@@ -77,10 +77,11 @@ Start speech-to-text in a third terminal:
 npm run speech:local:start
 ```
 
-Check that Ollama and Qwen are ready:
+Check that the configured Runpod endpoint is ready (requires
+`RUNPOD_API_KEY` and `RUNPOD_ENDPOINT_ID` in the shell environment):
 
 ```powershell
-npm run ai:local:check
+npm run ai:runpod:check
 ```
 
 Start the inventory API in a fourth terminal:
@@ -245,8 +246,9 @@ See `docs/VOICE_TRANSCRIPTION.md` for the detailed flow.
 ## AI extraction and clarification
 
 Milestone 6 is complete. The reviewed transcript is sent through the protected
-NestJS API to the local `qwen3:4b` model in Ollama. Qwen returns a fixed JSON
-shape, and Zod validates it before the application uses any field.
+NestJS API to the `Qwen/Qwen3-4B` model on Runpod Serverless. The worker
+returns a fixed JSON shape, and Zod validates it before the application uses
+any field.
 
 Products and locations must match active PostgreSQL records. Unknown or
 low-confidence required fields generate clarification questions. The system

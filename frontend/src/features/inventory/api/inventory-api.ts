@@ -3,36 +3,154 @@ import { keycloak } from "../auth/keycloak";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
 let accessToken: string | null = null;
+let authProvider: "local" | "keycloak" | null = null;
 let tokenRefreshPromise: Promise<void> | null = null;
+let localRefreshPromise: Promise<LocalAuthResponse> | null = null;
+let authFailureHandler: (() => void) | null = null;
+let csrfToken: string | null = null;
+let csrfBootstrapPromise: Promise<string> | null = null;
 
-export function setInventoryAccessToken(token?: string) {
+export function setInventoryAccessToken(
+  token?: string,
+  provider?: "local" | "keycloak",
+) {
   accessToken = token ?? null;
+  if (provider) authProvider = provider;
+  if (!token) authProvider = null;
 }
 
-/**
- * Keycloak access tokens are short-lived (default ~5 minutes). The app
- * refreshes them periodically, but a long-running voice update can outlive
- * the token and a request can land exactly on the expiry boundary, producing
- * an occasional HTTP 401. This helper reacquires the access token through
- * Keycloak's refresh-token grant before a request when it is missing or near
- * expiry, and is also used to retry once after a real 401. Authentication is
- * never weakened or bypassed: a rejected refresh grant surfaces the
- * expired-session state instead of silently retrying forever.
- */
-async function refreshAccessToken(): Promise<void> {
-  if (accessToken && !keycloak.isTokenExpired(60)) return;
-  if (!keycloak.authenticated || !keycloak.refreshToken) return;
+export function getInventoryAuthProvider() {
+  return authProvider;
+}
+
+export function setInventoryAuthFailureHandler(handler?: () => void) {
+  authFailureHandler = handler ?? null;
+}
+
+function headersWithJson(init?: RequestInit, csrf?: string) {
+  const headers = new Headers(init?.headers);
+  if (init?.body && !(init.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (csrf) headers.set("x-csrf-token", csrf);
+  return headers;
+}
+
+async function readApiError(response: Response) {
+  const payload = await response.json().catch(() => null) as
+    | { message?: string | string[] }
+    | null;
+  return Array.isArray(payload?.message)
+    ? payload.message.join(" ")
+    : payload?.message;
+}
+
+async function bootstrapCsrfToken(force = false): Promise<string> {
+  if (!force && csrfToken) return csrfToken;
+  if (csrfBootstrapPromise) return csrfBootstrapPromise;
+
+  csrfBootstrapPromise = fetch(`${API_BASE_URL}/auth/csrf`, {
+    method: "GET",
+    credentials: "include",
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(
+          (await readApiError(response)) ||
+            `CSRF bootstrap failed with status ${response.status}.`,
+        );
+      }
+      const payload = await response.json() as { csrfToken?: unknown };
+      if (typeof payload.csrfToken !== "string" || payload.csrfToken.length < 16) {
+        throw new Error("CSRF bootstrap returned an invalid token.");
+      }
+      csrfToken = payload.csrfToken;
+      return payload.csrfToken;
+    })
+    .finally(() => {
+      csrfBootstrapPromise = null;
+    });
+  return csrfBootstrapPromise;
+}
+
+async function publicAuthRequest<T>(
+  path: string,
+  init: RequestInit,
+  options: { csrfRequired?: boolean } = {},
+): Promise<T> {
+  const csrfRequired = options.csrfRequired ?? false;
+  let csrfRetried = false;
+  const perform = async () => {
+    const token = csrfRequired ? await bootstrapCsrfToken() : undefined;
+    return fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      credentials: "include",
+      headers: headersWithJson(init, token),
+    });
+  };
+
+  let response = await perform();
+  if (response.status === 403 && csrfRequired && !csrfRetried) {
+    csrfRetried = true;
+    csrfToken = null;
+    await bootstrapCsrfToken(true);
+    response = await perform();
+  }
+  if (!response.ok) {
+    throw new Error(
+      (await readApiError(response)) ||
+        `Authentication request failed with status ${response.status}.`,
+    );
+  }
+  return response.status === 204
+    ? (undefined as T)
+    : response.json() as Promise<T>;
+}
+
+async function refreshLocalAccessToken() {
+  if (!localRefreshPromise) {
+    localRefreshPromise = publicAuthRequest<LocalAuthResponse>(
+      "/auth/refresh",
+      { method: "POST" },
+      { csrfRequired: true },
+    )
+      .then((result) => {
+        setInventoryAccessToken(result.accessToken, "local");
+        return result;
+      })
+      .finally(() => {
+        localRefreshPromise = null;
+      });
+  }
+  return localRefreshPromise;
+}
+
+export function refreshLocalSession() {
+  return refreshLocalAccessToken();
+}
+
+/** Refresh the active provider's session. Local refresh is single-flight so
+ * concurrent startup/API calls cannot rotate the same cookie twice. */
+async function refreshAccessToken(force = false): Promise<void> {
+  if (!force && accessToken) {
+    if (authProvider === "local") return;
+    if (authProvider === "keycloak" && !keycloak.isTokenExpired(60)) return;
+  }
+
+  if (authProvider === "local") {
+    await refreshLocalAccessToken();
+    return;
+  }
+
+  if (authProvider !== "keycloak" || !keycloak.authenticated || !keycloak.refreshToken) {
+    return;
+  }
+
   if (!tokenRefreshPromise) {
     tokenRefreshPromise = keycloak
       .updateToken(60)
       .then(() => {
-        // updateToken(60) resolves without refreshing when the token still
-        // has more than 60 seconds left; always publish the current token.
         accessToken = keycloak.token ?? null;
-      })
-      .catch(() => {
-        // A transient refresh failure must not clear a still-valid token;
-        // the caller decides whether the session is really expired.
       })
       .finally(() => {
         tokenRefreshPromise = null;
@@ -50,40 +168,64 @@ async function refreshAccessToken(): Promise<void> {
 async function withAuthRetry(
   url: string,
   init?: RequestInit,
+  options: { csrfRequired?: boolean } = {},
 ): Promise<Response> {
   await refreshAccessToken();
-  const perform = (token: string | null) =>
-    fetch(url, {
+  const csrfRequired = options.csrfRequired ?? false;
+  let csrfRetried = false;
+  const perform = async (token: string | null) => {
+    const currentCsrfToken = csrfRequired
+      ? await bootstrapCsrfToken()
+      : undefined;
+    return fetch(url, {
       ...init,
-      headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...init?.headers,
-      },
+      credentials: csrfRequired ? "include" : init?.credentials,
+      headers: (() => {
+        const headers = new Headers(init?.headers);
+        if (token) headers.set("Authorization", `Bearer ${token}`);
+        else headers.delete("Authorization");
+        if (currentCsrfToken) headers.set("x-csrf-token", currentCsrfToken);
+        return headers;
+      })(),
     });
-  let response = await perform(accessToken);
+  };
+  const performWithCsrfRecovery = async (token: string | null) => {
+    let response = await perform(token);
+    if (response.status === 403 && csrfRequired && !csrfRetried) {
+      csrfRetried = true;
+      csrfToken = null;
+      await bootstrapCsrfToken(true);
+      response = await perform(token);
+    }
+    return response;
+  };
+  let response = await performWithCsrfRecovery(accessToken);
   if (response.status === 401) {
     // The access token expired mid-flight; reacquire it safely and retry the
     // exact same request once. If the refresh grant itself was rejected (the
     // session is genuinely expired), surface that state instead of sending a
     // stale token a second time.
-    await refreshAccessToken();
-    let sessionStillValid = false;
+    let refreshSucceeded = true;
     try {
-      sessionStillValid = Boolean(
-        keycloak.authenticated &&
-          keycloak.token &&
-          !keycloak.isTokenExpired(0),
-      );
+      await refreshAccessToken(true);
     } catch {
-      sessionStillValid = false;
+      refreshSucceeded = false;
     }
-    if (!sessionStillValid) {
+    if (!refreshSucceeded || !accessToken) {
       setInventoryAccessToken();
+      authFailureHandler?.();
       throw new Error(
         "Your secure session expired. Please sign in again.",
       );
     }
-    response = await perform(accessToken);
+    response = await performWithCsrfRecovery(accessToken);
+    if (response.status === 401) {
+      setInventoryAccessToken();
+      authFailureHandler?.();
+      throw new Error(
+        "Your secure session expired. Please sign in again.",
+      );
+    }
   }
   return response;
 }
@@ -165,12 +307,13 @@ export interface ApiCycleCountPlanDetail extends ApiCycleCountPlan {
   instructions?: string | null;
   tasks: ApiCycleCountPlanTask[];
 }
-export interface ApiInventoryTask { id:string; type:string; priority:"LOW"|"MEDIUM"|"HIGH"|"URGENT"; status:"OPEN"|"IN_PROGRESS"|"COMPLETED"|"CANCELLED"; title:string; description?:string|null; dueAt?:string|null; createdAt:string; startedAt?:string|null; completedAt?:string|null; quantity?:number|null; product?:ApiProduct|null; location?:ApiLocation|null; sourceLocation?:ApiLocation|null; destinationLocation?:ApiLocation|null; assignedTo?:{id:string;employeeId:string;displayName:string}|null; cycleCountPlan?:ApiCycleCountPlan|null; sourceTransactionId?:string|null; preparedBy?:{id:string;employeeId:string;displayName:string}|null; discrepancies?: Array<{ id:string; caseNumber:string; expectedQuantity:number; countedQuantity:number; differenceQuantity:number; status:string; managerNotes?:string|null }> | null; }
+export interface ApiInventoryTask { id:string; type:string; priority:"LOW"|"MEDIUM"|"HIGH"|"URGENT"; status:"OPEN"|"IN_PROGRESS"|"COMPLETED"|"CANCELLED"; title:string; description?:string|null; dueAt?:string|null; createdAt:string; startedAt?:string|null; completedAt?:string|null; quantity?:number|null; product?:ApiProduct|null; location?:ApiLocation|null; sourceLocation?:ApiLocation|null; destinationLocation?:ApiLocation|null; assignedTo?:{id:string;employeeId:string;displayName:string}|null; cycleCountPlan?:ApiCycleCountPlan|null; sourceTransactionId?:string|null; preparedBy?:{id:string;employeeId:string;displayName:string}|null; discrepancies?: Array<{ id:string; caseNumber:string; expectedQuantity:number; countedQuantity:number; differenceQuantity:number; status:string; managerNotes?:string|null }> | null; reservationId?:string|null; shipmentReference?:string|null; reservation?:{request?:{referenceNumber?:string|null}|null}|null; }
 export interface ApiTaskAssignee { id:string; employeeId:string; displayName:string; shift?:string|null; warehouseZone?:string|null; openTaskCount?: number; }
 
 export interface ApiBalance {
   id: string;
   quantity: number;
+  reservedQuantity: number;
   product: ApiProduct;
   location: ApiLocation;
 }
@@ -411,7 +554,29 @@ export interface ApiReorderDraft {
 }
 export type ServiceHealthStatus = "healthy" | "degraded" | "unavailable";
 export interface ApiSystemHealth { status: "healthy" | "degraded"; checkedAt: string; services: Array<{ key: string; name: string; status: ServiceHealthStatus; detail: string }>; }
-export interface ApiSystemUser { id: string; employeeId: string; email: string; displayName: string; role: "WORKER" | "MANAGER" | "ADMINISTRATOR"; shift?: string | null; warehouseZone?: string | null; active: boolean; lastLoginAt?: string | null; createdAt: string; updatedAt: string; _count: { createdTransactions: number; assignedTasks: number }; }
+export type ApiAuthProvider = "local" | "keycloak";
+export type ApiUserRole = "WORKER" | "MANAGER" | "ADMINISTRATOR";
+export interface ApiAuthenticatedUser {
+  id: string;
+  employeeId: string;
+  email: string;
+  displayName: string;
+  role: ApiUserRole;
+  shift?: string | null;
+  warehouseZone?: string | null;
+  active: boolean;
+  lastLoginAt?: string | null;
+  mustChangePassword: boolean;
+  localAuthEnabled: boolean;
+  authProvider: ApiAuthProvider;
+}
+export interface LocalAuthResponse {
+  accessToken: string;
+  tokenType: "Bearer";
+  expiresIn: number;
+  user: ApiAuthenticatedUser;
+}
+export interface ApiSystemUser { id: string; employeeId: string; email: string; displayName: string; role: ApiUserRole; shift?: string | null; warehouseZone?: string | null; active: boolean; lastLoginAt?: string | null; mustChangePassword?: boolean; localAuthEnabled?: boolean; compatibilitySync?: "synchronized" | "pending" | "failed" | "not_configured"; createdAt: string; updatedAt: string; _count: { createdTransactions: number; assignedTasks: number }; }
 export interface ApiUserAccessAudit { id: string; action: string; actorUsername: string; actorEmail?: string | null; targetUserId: string; targetEmployeeId: string; targetDisplayName: string; details?: string | null; createdAt: string; }
 export interface CreateSystemUserInput {
   employeeId: string;
@@ -424,18 +589,56 @@ export interface CreateSystemUserInput {
 }
 export type UpdateSystemUserInput = Omit<CreateSystemUserInput, "temporaryPassword">;
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export function loginLocal(identifier: string, password: string) {
+  return publicAuthRequest<LocalAuthResponse>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ identifier, password }),
+  }).then((result) => {
+    setInventoryAccessToken(result.accessToken, "local");
+    return result;
+  });
+}
+
+export async function logoutLocal() {
+  try {
+    await publicAuthRequest<void>("/auth/logout", {
+      method: "POST",
+      headers: accessToken
+        ? { Authorization: `Bearer ${accessToken}` }
+        : undefined,
+    }, { csrfRequired: true });
+  } finally {
+    setInventoryAccessToken();
+  }
+}
+
+export function changeLocalPassword(currentPassword: string, newPassword: string) {
+  return request<LocalAuthResponse>("/auth/change-password", {
+    method: "POST",
+    credentials: "include",
+    body: JSON.stringify({ currentPassword, newPassword }),
+  }, { csrfRequired: true }).then((result) => {
+    setInventoryAccessToken(result.accessToken, "local");
+    return result;
+  });
+}
+
+export function fetchAuthenticatedUser() {
+  return request<ApiAuthenticatedUser>("/auth/me");
+}
+
+async function request<T>(
+  path: string,
+  init?: RequestInit,
+  options: { csrfRequired?: boolean } = {},
+): Promise<T> {
   const response = await withAuthRetry(`${API_BASE_URL}${path}`, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
-  });
+    headers: headersWithJson(init),
+  }, options);
 
   if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { message?: string | string[] } | null;
-    const message = Array.isArray(payload?.message) ? payload.message.join(" ") : payload?.message;
+    const message = await readApiError(response);
     throw new Error(message || `Inventory API request failed with status ${response.status}.`);
   }
 

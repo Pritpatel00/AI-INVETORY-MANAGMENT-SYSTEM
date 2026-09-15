@@ -5,6 +5,7 @@ import { NestFactory } from "@nestjs/core";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 
 import { AppModule } from "./app.module";
+import { getCorsOptions, getWebAppOrigin } from "./app-security.config";
 import { MetricsService } from "./metrics/metrics.service";
 
 async function bootstrap() {
@@ -24,6 +25,7 @@ async function bootstrap() {
 
   const app = await NestFactory.create(AppModule);
   const port = Number(process.env.PORT ?? 4000);
+  const webAppOrigin = getWebAppOrigin();
 
   // Ensures Nest's onModuleDestroy/beforeApplicationShutdown hooks (e.g.
   // Prisma closing its DB connection pool) run on SIGTERM/SIGINT, so
@@ -31,10 +33,7 @@ async function bootstrap() {
   app.enableShutdownHooks();
 
   app.setGlobalPrefix("api");
-  app.enableCors({
-    origin: process.env.WEB_APP_ORIGIN ?? "http://localhost:3000",
-    credentials: true,
-  });
+  app.enableCors(getCorsOptions());
   // Stage 2 metrics: observe public-API requests. The /metrics endpoint is
   // served by MetricsService on a separate 127.0.0.1 listener, not here.
   const metricsService = app.get(MetricsService);
@@ -59,7 +58,7 @@ async function bootstrap() {
   await app.listen(port);
   // eslint-disable-next-line no-console
   console.log(
-    `Nirka Inventory API listening on port ${port} (env: ${process.env.NODE_ENV ?? "development"}, CORS origin: ${process.env.WEB_APP_ORIGIN ?? "http://localhost:3000"})`,
+    `Nirka Inventory API listening on port ${port} (env: ${process.env.NODE_ENV ?? "development"}, CORS origin: ${webAppOrigin})`,
   );
 }
 

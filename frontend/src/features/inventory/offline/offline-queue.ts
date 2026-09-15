@@ -5,10 +5,14 @@ import {
 } from "../api/inventory-api";
 
 const databaseName = "nirka-inventory-offline";
-const databaseVersion = 1;
+const databaseVersion = 2;
 const storeName = "pending-updates";
 
 export const offlineQueueChangedEvent = "nirka-offline-queue-changed";
+
+export function canonicalOfflineOwnerId(userId: string) {
+  return `nirka-user:${userId}`;
+}
 
 export interface OfflineInventoryUpdate {
   id: string;
@@ -26,14 +30,32 @@ export interface OfflineSyncResult {
   lastError?: string;
 }
 
+/** Pure, idempotent owner migration used by the IndexedDB migration below. */
+export function migrateOfflineInventoryOwnerRecords(
+  records: OfflineInventoryUpdate[],
+  canonicalOwnerId: string,
+  legacyOwnerIds: string[],
+) {
+  const legacyOwners = new Set(
+    legacyOwnerIds.filter((ownerId) => ownerId && ownerId !== canonicalOwnerId),
+  );
+  return records.map((record) =>
+    legacyOwners.has(record.ownerId)
+      ? { ...record, ownerId: canonicalOwnerId }
+      : record,
+  );
+}
+
 function openOfflineDatabase() {
   return new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName, databaseVersion);
 
     request.onupgradeneeded = () => {
       const database = request.result;
-      if (!database.objectStoreNames.contains(storeName)) {
-        const store = database.createObjectStore(storeName, { keyPath: "id" });
+      const store = database.objectStoreNames.contains(storeName)
+        ? request.transaction?.objectStore(storeName)
+        : database.createObjectStore(storeName, { keyPath: "id" });
+      if (store && !store.indexNames.contains("ownerId")) {
         store.createIndex("ownerId", "ownerId", { unique: false });
       }
     };
@@ -88,6 +110,43 @@ export async function listOfflineInventoryUpdates(ownerId: string) {
 
 export async function countOfflineInventoryUpdates(ownerId: string) {
   return (await listOfflineInventoryUpdates(ownerId)).length;
+}
+
+/** Move records from the old Keycloak-subject owner to the canonical
+ * PostgreSQL user owner. Re-running this function is a no-op. */
+export async function migrateOfflineInventoryOwner(
+  userId: string,
+  legacyOwnerIds: string[],
+) {
+  const canonicalOwnerId = canonicalOfflineOwnerId(userId);
+  if (legacyOwnerIds.length === 0) return 0;
+
+  const database = await openOfflineDatabase();
+  let migrated = 0;
+  try {
+    const transaction = database.transaction(storeName, "readwrite");
+    const completion = waitForTransaction(transaction);
+    const store = transaction.objectStore(storeName);
+    const records = await waitForRequest(
+      store.getAll() as IDBRequest<OfflineInventoryUpdate[]>,
+    );
+    const nextRecords = migrateOfflineInventoryOwnerRecords(
+      records,
+      canonicalOwnerId,
+      legacyOwnerIds,
+    );
+    nextRecords.forEach((record, index) => {
+      if (record.ownerId !== records[index]?.ownerId) {
+        migrated += 1;
+        store.put(record);
+      }
+    });
+    await completion;
+  } finally {
+    database.close();
+  }
+  if (migrated > 0) announceQueueChange();
+  return migrated;
 }
 
 export async function enqueueOfflineInventoryUpdate(input: {

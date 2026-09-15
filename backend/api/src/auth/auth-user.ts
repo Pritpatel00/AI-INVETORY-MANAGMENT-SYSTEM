@@ -5,6 +5,15 @@ export interface AuthenticatedUser {
   username: string;
   email?: string;
   roles: string[];
+  userId?: string;
+  employeeId?: string;
+  displayName?: string;
+  role?: string;
+  provider?: "keycloak" | "local";
+  sessionId?: string;
+  authVersion?: number;
+  mustChangePassword?: boolean;
+  active?: boolean;
 }
 
 export type AuthenticatedRequest = Request & {

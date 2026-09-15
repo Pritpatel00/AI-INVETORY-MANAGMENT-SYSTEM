@@ -13,6 +13,10 @@ import {
  
 import { createHash } from "node:crypto";
 import type { AuthenticatedUser } from "../auth/auth-user";
+import {
+  hasApplicationRole,
+  resolveCanonicalUser,
+} from "../auth/canonical-user";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateTaskDto } from "./create-task.dto";
@@ -26,7 +30,7 @@ export class TasksService {
   ) {}
   async list(actor: AuthenticatedUser) {
     const user = await this.resolveUser(actor);
-    const manager = actor.roles.some((r) => r === "manager" || r === "administrator");
+    const manager = hasApplicationRole(actor, ["manager", "administrator"]);
     return this.prisma.inventoryTask.findMany({
       // Workers see their own tasks plus the shared pool of unassigned open
       // tasks. Any available executive can claim one by starting it.
@@ -543,7 +547,7 @@ export class TasksService {
     };
   }
   async cancel(id: string, actor: AuthenticatedUser) {
-    const manager = actor.roles.some((role) => role === "manager" || role === "administrator");
+    const manager = hasApplicationRole(actor, ["manager", "administrator"]);
     if (!manager) throw new ForbiddenException("Only managers and administrators can cancel tasks.");
 
     const reason = "Task cancelled by manager because it was stale or no longer required.";
@@ -611,7 +615,7 @@ export class TasksService {
     const user = await this.resolveUser(actor);
     const task = await this.prisma.inventoryTask.findUnique({ where: { id } });
     if (!task) throw new NotFoundException("Task not found.");
-    const manager = actor.roles.some((r) => r === "manager" || r === "administrator");
+    const manager = hasApplicationRole(actor, ["manager", "administrator"]);
     const unassigned = task.assignedToId === null;
     if (!manager && task.assignedToId !== user.id && !unassigned) {
       throw new ForbiddenException("This task is assigned to another user.");
@@ -718,85 +722,7 @@ export class TasksService {
     return this.prisma.inventoryTask.upsert({ where: { sourceTransactionId: transaction.id }, update: {}, create: { type: TaskType.RECOUNT, priority: TaskPriority.HIGH, title: `Recount ${transaction.product.name}`, description: "Manager requested a physical recount before inventory adjustment.", dueAt, assignedToId: transaction.createdById, productId: transaction.productId, locationId: transaction.sourceLocationId, sourceTransactionId: transaction.id } });
   }
   private async resolveUser(actor: AuthenticatedUser) {
-  const employeeId = actor.username.toUpperCase();
-  const email = actor.email?.toLowerCase();
-
-  // Always look up by employeeId first
-  let user = await this.prisma.user.findUnique({
-    where: {
-      employeeId,
-    },
-  });
-
-  // If not found, fall back to email
-  if (!user && email) {
-    user = await this.prisma.user.findUnique({
-      where: {
-        email,
-      },
-    });
-  }
-
-  // Existing user
-  if (user) {
-    const updateData: Prisma.UserUpdateInput = {};
-
-    if (email && user.email !== email) {
-      updateData.email = email;
-    }
-
-    const role = actor.roles.includes("administrator")
-      ? UserRole.ADMINISTRATOR
-      : actor.roles.includes("manager")
-        ? UserRole.MANAGER
-        : UserRole.WORKER;
-
-    if (user.role !== role) {
-      updateData.role = role;
-    }
-
-    if (Object.keys(updateData).length > 0) {
-      user = await this.prisma.user.update({
-        where: {
-          id: user.id,
-        },
-        data: updateData,
-      });
-    }
-
-    return user;
-  }
-
-  const role = actor.roles.includes("administrator")
-    ? UserRole.ADMINISTRATOR
-    : actor.roles.includes("manager")
-      ? UserRole.MANAGER
-      : UserRole.WORKER;
-
-  try {
-    return await this.prisma.user.create({
-      data: {
-        employeeId,
-        email: email ?? `${actor.username}@keycloak.local`,
-        displayName: actor.username,
-        role,
-        active: true,
-      },
-    });
-  } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    ) {
-      return this.prisma.user.findUniqueOrThrow({
-        where: {
-          employeeId,
-        },
-      });
-    }
-
-    throw error;
-  }
+    return resolveCanonicalUser(this.prisma, actor);
   }
 
 }
