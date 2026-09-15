@@ -44,7 +44,11 @@ RUN npx prisma generate
 # --- runtime ---
 FROM node:22.13-bookworm-slim AS runtime
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends openssl \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl \
+    python3 \
+    make \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 RUN groupadd --system nirka && useradd --system --gid nirka --home /app nirka
