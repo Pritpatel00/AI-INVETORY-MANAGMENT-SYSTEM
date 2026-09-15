@@ -93,7 +93,6 @@ export default defineConfig(() => {
       developmentCacheReset,
       vinext(),
       sites(),
-      nitro(),
     ],
   };
 });
