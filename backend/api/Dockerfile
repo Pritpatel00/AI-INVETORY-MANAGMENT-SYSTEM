@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl \
 
 # --- deps ---
 FROM base AS deps
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
 COPY package.json ./package.json
 COPY backend/api/package.json backend/api/package-lock.json ./backend/api/
 WORKDIR /repo/backend/api
@@ -32,6 +34,8 @@ RUN npm run build
 
 # --- prod deps only (smaller runtime image) ---
 FROM base AS prod-deps
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
 COPY package.json ./package.json
 COPY backend/api/package.json backend/api/package-lock.json ./backend/api/
 WORKDIR /repo/backend/api
@@ -46,9 +50,6 @@ FROM node:22.13-bookworm-slim AS runtime
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl \
-    python3 \
-    make \
-    g++ \
     && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 RUN groupadd --system nirka && useradd --system --gid nirka --home /app nirka
