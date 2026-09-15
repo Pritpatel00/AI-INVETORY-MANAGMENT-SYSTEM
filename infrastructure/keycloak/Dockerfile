@@ -21,6 +21,6 @@ ENV KC_HEALTH_ENABLED=true
 ENV KC_METRICS_ENABLED=true
 ENV KC_DB=postgres
 
-ENTRYPOINT ["/bin/sh", "-c"]
+ENTRYPOINT ["/opt/keycloak/bin/kc.sh"]
 
-CMD ["/opt/keycloak/bin/kc.sh bootstrap-admin user --username ${KC_BOOTSTRAP_ADMIN_USERNAME} --password ${KC_BOOTSTRAP_ADMIN_PASSWORD} || true && /opt/keycloak/bin/kc.sh start --optimized --http-enabled=true --proxy-headers=xforwarded --import-realm"]
+CMD ["start", "--optimized", "--http-enabled=true", "--proxy-headers=xforwarded", "--import-realm"]
