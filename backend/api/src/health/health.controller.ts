@@ -58,11 +58,22 @@ export class HealthController {
             { Authorization: `Bearer ${runpodApiKey}` },
           )
         : Promise.resolve(false);
+    const checkSpeech = async () => {
+      try {
+        const url = new URL(process.env.WHISPER_API_URL?.trim() ?? "");
+        if (!["http:", "https:"].includes(url.protocol)) return false;
+        // The persistent Pod serves its health response at the API root.
+        url.pathname = url.pathname.replace(/\/+$/, "").replace(/\/transcribe$/, "") + "/";
+        return await checkHttp(url.toString());
+      } catch {
+        return false;
+      }
+    };
     const [web, database, keycloak, speech, ai] = await Promise.all([
       checkHttp(process.env.WEB_APP_ORIGIN ?? "http://localhost:3000"),
       checkDatabase(),
       checkHttp(process.env.KEYCLOAK_ISSUER ?? "http://localhost:8080/realms/nirka-inventory"),
-      checkHttp(`${process.env.SPEECH_SERVICE_URL ?? "http://127.0.0.1:5001"}/health`),
+      checkSpeech(),
       runpodHealth,
     ]);
     const services = [
