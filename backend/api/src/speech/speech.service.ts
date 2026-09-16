@@ -6,6 +6,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
+import { z } from "zod";
 
 import type { AuthenticatedUser } from "../auth/auth-user";
 import { PrismaService } from "../prisma/prisma.service";
@@ -19,10 +20,15 @@ interface WhisperResponse {
   segments: Array<{ start: number; end: number; text: string }>;
 }
 
+const whisperSchema = z.object({
+  success: z.literal(true),
+  text: z.string(),
+  language: z.string().min(1),
+});
+
 @Injectable()
 export class SpeechService {
-  private readonly speechServiceUrl =
-    process.env.SPEECH_SERVICE_URL ?? "http://127.0.0.1:5001";
+  private readonly whisperApiUrl = process.env.WHISPER_API_URL?.trim();
   private readonly evidenceRoot = resolve(
     process.env.EVIDENCE_STORAGE_PATH ?? "../../.local/evidence",
   );
@@ -34,6 +40,23 @@ export class SpeechService {
     actor: AuthenticatedUser,
     language?: string,
   ) {
+    let endpoint: URL;
+    try {
+      endpoint = new URL(this.whisperApiUrl ?? "");
+      if (!["http:", "https:"].includes(endpoint.protocol)) throw new Error();
+      // Accept either the Pod base URL or its full /transcribe endpoint.
+      const path = endpoint.pathname.replace(/\/+$/, "");
+      endpoint.pathname = path.endsWith("/transcribe") ? path : `${path}/transcribe`;
+    } catch {
+      throw new ServiceUnavailableException("The speech-to-text service is not configured with a valid WHISPER_API_URL.");
+    }
+    const body = new FormData();
+    body.append(
+      "audio",
+      new Blob([new Uint8Array(audio.buffer)], { type: audio.mimetype }),
+      audio.originalname || "warehouse-recording.webm",
+    );
+    if (language) body.append("language", language);
     const user = actor.email
       ? await this.prisma.user.findUnique({
           where: { email: actor.email.toLowerCase() },
@@ -56,35 +79,50 @@ export class SpeechService {
     await writeFile(evidencePath, audio.buffer);
 
     try {
-      const form = new FormData();
-      form.append(
-        "audio",
-        new Blob([new Uint8Array(audio.buffer)], { type: audio.mimetype }),
-        audio.originalname || "warehouse-recording.webm",
-      );
-      if (language) form.append("language", language);
-
-      let response: Response;
+      let result: unknown;
+      const signal = AbortSignal.timeout(120_000);
       try {
-        response = await fetch(`${this.speechServiceUrl}/transcribe`, {
+        const response = await fetch(endpoint.toString(), {
           method: "POST",
-          body: form,
-          signal: AbortSignal.timeout(120_000),
+          // fetch supplies the multipart Content-Type including its boundary.
+          body,
+          signal,
         });
-      } catch {
+        if (!response.ok) {
+          throw new BadGatewayException(
+            `Speech transcription failed with status ${response.status}.`,
+          );
+        }
+        try {
+          result = await response.json();
+        } catch (error) {
+          if (signal.aborted) throw error;
+          throw new BadGatewayException("The speech service returned an invalid response.");
+        }
+      } catch (error) {
+        if (error instanceof BadGatewayException) throw error;
         throw new ServiceUnavailableException(
-          "The local speech-to-text service is unavailable.",
+          signal.aborted
+            ? "Speech transcription timed out. Please try a shorter recording."
+            : "The speech-to-text service is unavailable.",
         );
       }
 
-      if (!response.ok) {
-        const details = await response.text();
-        throw new BadGatewayException(
-          `Speech transcription failed with status ${response.status}: ${details}`,
-        );
+      const parsed = whisperSchema.safeParse(result);
+      if (!parsed.success) {
+        // Failed or malformed responses must never create transcript evidence.
+        throw new BadGatewayException("Speech transcription did not return a completed, valid result.");
       }
-
-      const transcription = (await response.json()) as WhisperResponse;
+      const output = parsed.data;
+      const transcription: WhisperResponse = {
+        text: output.text,
+        language: output.language,
+        // The Pod does not return these legacy fields. Zero means unavailable.
+        languageProbability: 0,
+        duration: 0,
+        model: "faster-whisper",
+        segments: [],
+      };
       const evidence = await this.prisma.voiceEvidence.create({
         data: {
           id: evidenceId,
