@@ -124,11 +124,14 @@ export function clarificationRetryHelp(field: string) {
 export const pageDescriptions: Record<Role, Record<string, string>> = {
   worker: {
     Overview: "See today\u2019s work, stock activity and anything that needs your attention.",
+    Home: "See today\u2019s work, stock activity and anything that needs your attention.",
+    History: "Review your submitted, posted and pending inventory updates.",
     "My transactions": "See every inventory transaction included in today\u2019s total.",
     "Cycle counts": "Review every physical count submitted today and its current status.",
     "Posted today": "See the validated inventory updates successfully posted today.",
     "Voice entry": "Record one clear inventory action and review it before stock changes.",
     "Task queue": "Complete the warehouse work assigned to you by a manager.",
+    "Active items": "Browse the live stock catalogue — on-hand quantity, locations and stock status, read-only.",
     "My history": "Review your submitted, posted and pending inventory updates.",
     Settings: "Check your microphone, speaker and Warehouse Executive access.",
   },
@@ -153,6 +156,16 @@ export const pageDescriptions: Record<Role, Record<string, string>> = {
 
 export function pageDescription(role: Role, page: string) {
   return pageDescriptions[role][page] ?? pageDescriptions[role].Overview;
+}
+
+/**
+ * The warehouse executive landing screen is "Overview". "Home" is the older
+ * page value kept in deep links, redirects and the voice-completion flow, so it
+ * resolves to the same screen instead of showing a second title for one page.
+ */
+export function resolveWorkerPage(page: string) {
+  if (page === "Home") return "Overview";
+  return page;
 }
 
 export function resolveManagerPage(page: string) {

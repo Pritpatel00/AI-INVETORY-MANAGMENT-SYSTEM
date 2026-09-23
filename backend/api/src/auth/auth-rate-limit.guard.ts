@@ -14,6 +14,7 @@ const POLICIES: Record<string, number> = {
   login: 10,
   refresh: 30,
   "change-password": 10,
+  "initialize-admin-password": 5,
 };
 
 @Injectable()

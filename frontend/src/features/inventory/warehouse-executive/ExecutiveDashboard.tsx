@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { AlertTriangle, ArrowDownToLine, ArrowRightLeft, BellRing, Boxes, Camera, CheckCircle2, ChevronDown, ClipboardCheck, Clock3, FileClock, ImagePlus, LayoutDashboard, Mic, PackageMinus, RefreshCcw, Settings, ShieldCheck, Sparkles, Trash2, Volume2, X } from "lucide-react";
-import { mapTransactions, fetchInventorySnapshot, fetchInventoryTasks, startInventoryTask, completeInventoryTask, cancelInventoryTransaction, createPendingInventoryTransaction, confirmInventoryTransaction, extractInventoryDetails, transcribeAudio, uploadTransactionEvidence, type ApiProduct, type ApiLocation, type ApiTransaction, type ApiInventoryTask, type InventoryExtraction, type InventorySnapshot, type SpeechTranscription, type InventoryExtractionContext } from "../api/inventory-api";
+import { AlertTriangle, ArrowDownToLine, ArrowRightLeft, BellRing, Boxes, Camera, CheckCircle2, ChevronDown, ClipboardCheck, Clock3, ImagePlus, Mic, PackageMinus, RefreshCcw, ShieldCheck, Sparkles, Trash2, Volume2, X } from "lucide-react";
+import { mapTransactions, fetchInventorySnapshot, fetchInventoryTasks, startInventoryTask, completeInventoryTask, cancelInventoryTransaction, createPendingInventoryTransaction, confirmInventoryTransaction, extractInventoryDetails, previewTranscribeAudio, transcribeAudio, uploadTransactionEvidence, type ApiProduct, type ApiLocation, type ApiTransaction, type ApiInventoryTask, type InventoryExtraction, type InventorySnapshot, type SpeechTranscription, type InventoryExtractionContext } from "../api/inventory-api";
 import { enqueueOfflineInventoryUpdate } from "../offline/offline-queue";
 import type { VoiceState } from "../types";
 import { formatAction, taskTypeLabel, formatTaskDue, formatClarificationValue, clarificationRetryHelp, STOCK_OUT_ACTIONS } from "../shared/helpers";
@@ -12,6 +12,19 @@ import { ExecutiveHome, type ExecutiveVoiceWorkflow } from "./ExecutiveHome";
 import { ExecutiveTaskQueue } from "./ExecutiveTaskQueue";
 import { ExecutiveHistory } from "./ExecutiveHistory";
 import { ExecutiveSettings } from "./ExecutiveSettings";
+import { ExecutiveActiveItems } from "./ExecutiveActiveItems";
+import { TodayTaskSheet } from "./TodayTaskSheet";
+
+/**
+ * Page values rendered by the markup at the bottom of this component: the
+ * voice-entry screen (its `#voice-entry` section is switched on by the
+ * `data-active-page` routing CSS) plus the metric drill-down screens.
+ * Every other value resolves to an explicit page component above, and unknown
+ * values fall back to the worker overview so the workspace can never render a
+ * blank screen.
+ */
+const LEGACY_ROUTED_PAGES = ["Voice entry", "My transactions", "Cycle counts", "Posted today"];
+const LIVE_PREVIEW_WINDOW_CHUNKS = 32;
 
 const preferredGuidanceVoices = [
   "Microsoft Neerja Online (Natural)",
@@ -20,6 +33,12 @@ const preferredGuidanceVoices = [
   "Google UK English Female",
   "Microsoft Zira",
 ];
+
+function formatRecordingDuration(seconds: number) {
+  const minutes = Math.floor(seconds / 60).toString().padStart(2, "0");
+  const remainingSeconds = (seconds % 60).toString().padStart(2, "0");
+  return `${minutes}:${remainingSeconds}`;
+}
 
 function createGuidanceUtterance(text: string) {
   const utterance = new SpeechSynthesisUtterance(text);
@@ -61,6 +80,8 @@ export function ExecutiveDashboard({
 }) {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [message, setMessage] = useState("");
+  const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
+  const [recordingElapsedSeconds, setRecordingElapsedSeconds] = useState(0);
   const [snapshot, setSnapshot] = useState<InventorySnapshot | null>(null);
   const [assignedTasks, setAssignedTasks] = useState<ApiInventoryTask[]>([]);
   const [taskActionId, setTaskActionId] = useState<string | null>(null);
@@ -98,6 +119,9 @@ export function ExecutiveDashboard({
   const [liveTranscript, setLiveTranscript] = useState("");
   const [liveTranscriptSupported, setLiveTranscriptSupported] =
     useState(false);
+  const [liveTranscriptStatus, setLiveTranscriptStatus] = useState<
+    "starting" | "listening" | "unsupported" | "permission" | "network" | "error"
+  >("starting");
   const [transcription, setTranscription] =
     useState<SpeechTranscription | null>(null);
   const [extraction, setExtraction] =
@@ -128,9 +152,14 @@ export function ExecutiveDashboard({
   const [evidenceUploading, setEvidenceUploading] = useState(false);
   const [evidenceMessage, setEvidenceMessage] = useState("");
   const [evidenceAttached, setEvidenceAttached] = useState(false);
+  const [showEvidenceRequiredModal, setShowEvidenceRequiredModal] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const livePreviewTimerRef = useRef<number | null>(null);
+  const livePreviewActiveRef = useRef(false);
+  const livePreviewInFlightRef = useRef(false);
+  const livePreviewGenerationRef = useRef(0);
   const liveRecognitionRef = useRef<SpeechRecognition | null>(null);
   const liveRecognitionActiveRef = useRef(false);
   const liveFinalRef = useRef("");
@@ -240,17 +269,17 @@ export function ExecutiveDashboard({
     return () => window.clearInterval(timer);
   }, []);
 
-  // After a successful confirmation, navigate back to the page the worker
-  // came from (Home or Task queue) so they don't stay on the Voice Entry
-  // screen indefinitely.
   useEffect(() => {
-    if (submissionState !== "complete") return;
-    const redirectTimer = window.setTimeout(() => {
-      onNavigate(voiceOrigin === "task-queue" ? "Task queue" : "Home");
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }, 2500);
-    return () => window.clearTimeout(redirectTimer);
-  }, [submissionState, voiceOrigin, onNavigate]);
+    if (recordingStartedAt === null) return;
+    const updateElapsed = () => {
+      setRecordingElapsedSeconds(
+        Math.max(0, Math.floor((Date.now() - recordingStartedAt) / 1000)),
+      );
+    };
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 250);
+    return () => window.clearInterval(timer);
+  }, [recordingStartedAt]);
 
   /** Re-fetch tasks and the inventory snapshot from the refresh/error banner. */
   async function refreshWorkerQueue() {
@@ -282,10 +311,10 @@ export function ExecutiveDashboard({
 
   const voiceCopy = useMemo(() => {
     if (voiceState === "recording") return { title: "Listening…", detail: "Simply say what you did, the number, the item name and the shelf." };
-    if (voiceState === "transcribing") return { title: "Creating transcript…", detail: "Whisper is processing the recording locally." };
-    if (voiceState === "review") return { title: "Transcript ready", detail: "Review or correct the spoken text before continuing." };
+    if (voiceState === "transcribing") return { title: "Creating your transcript…", detail: "Your recording is being converted to text. This usually takes a few seconds." };
+    if (voiceState === "review") return { title: "Transcript needs attention", detail: "The automatic extraction could not finish. Check the transcript and try again." };
     if (voiceState === "extracting") return { title: "Understanding your update…", detail: "AI is checking the item name and shelf name." };
-    if (voiceState === "extracted") return { title: "Inventory details ready", detail: "Review the AI suggestion before any transaction is created." };
+    if (voiceState === "extracted") return { title: "Inventory details ready", detail: "Confirm the inventory update when the prepared details look correct." };
     if (activeVoiceTask?.type === "TRANSFER") {
       return {
         title: "Ready — confirm the assigned transfer",
@@ -338,23 +367,93 @@ export function ExecutiveDashboard({
     }, 50);
   }
 
+  function startLocalWhisperPreview(generation: number) {
+    if (livePreviewTimerRef.current !== null) return;
+
+    const requestPreview = async () => {
+      if (
+        !livePreviewActiveRef.current ||
+        livePreviewGenerationRef.current !== generation ||
+        livePreviewInFlightRef.current ||
+        chunksRef.current.length === 0
+      ) {
+        return;
+      }
+      const recorder = recorderRef.current;
+      const chunks = chunksRef.current;
+      // Keep local fallback work bounded on CPU. The first chunk carries the
+      // WebM header; the remaining chunks cover roughly the latest eight
+      // seconds. The Stop action still submits the complete recording.
+      const previewChunks =
+        chunks.length > LIVE_PREVIEW_WINDOW_CHUNKS + 1
+          ? [chunks[0], ...chunks.slice(-LIVE_PREVIEW_WINDOW_CHUNKS)]
+          : [...chunks];
+      const recording = new Blob(previewChunks, {
+        type: recorder?.mimeType || "audio/webm",
+      });
+      livePreviewInFlightRef.current = true;
+      try {
+        const result = await previewTranscribeAudio(recording, { language: "en" });
+        if (
+          !livePreviewActiveRef.current ||
+          livePreviewGenerationRef.current !== generation
+        ) {
+          return;
+        }
+        setLiveTranscript(result.text.trim());
+        setLiveTranscriptSupported(true);
+        setLiveTranscriptStatus("listening");
+      } catch {
+        if (
+          livePreviewActiveRef.current &&
+          livePreviewGenerationRef.current === generation
+        ) {
+          setLiveTranscriptStatus("network");
+          setLiveTranscriptSupported(false);
+        }
+      } finally {
+        if (livePreviewGenerationRef.current === generation) {
+          livePreviewInFlightRef.current = false;
+        }
+      }
+    };
+
+    livePreviewTimerRef.current = window.setInterval(
+      () => void requestPreview(),
+      1200,
+    );
+    void requestPreview();
+  }
+
   function startLiveTranscription() {
     stopLiveTranscription();
+    setLiveTranscriptStatus("starting");
+    setLiveTranscriptSupported(false);
+    livePreviewActiveRef.current = true;
+    liveFinalRef.current = "";
+    const generation = livePreviewGenerationRef.current;
     const SpeechRecognitionCtor =
       window.SpeechRecognition ?? window.webkitSpeechRecognition;
+
     if (!SpeechRecognitionCtor) {
-      setLiveTranscriptSupported(false);
+      startLocalWhisperPreview(generation);
       return;
     }
+
     const recognition = new SpeechRecognitionCtor();
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = "en-US";
     recognition.maxAlternatives = 1;
-    liveFinalRef.current = "";
+    liveRecognitionRef.current = recognition;
+    liveRecognitionActiveRef.current = true;
+
+    recognition.onstart = () => {
+      if (!liveRecognitionActiveRef.current) return;
+      setLiveTranscriptSupported(true);
+      setLiveTranscriptStatus("listening");
+    };
     recognition.onresult = (event) => {
-      // Final text is accumulated in a ref because the browser restarts the
-      // recognizer after pauses, and each session starts with fresh results.
       let interimText = "";
       for (
         let index = event.resultIndex;
@@ -372,53 +471,69 @@ export function ExecutiveDashboard({
       setLiveTranscript(
         `${liveFinalRef.current}${interimText ? ` ${interimText}` : ""}`.trim(),
       );
+      setLiveTranscriptSupported(true);
+      setLiveTranscriptStatus("listening");
     };
     recognition.onerror = (event) => {
-      // Permanent failures end the live preview; transient ones are retried
-      // automatically when the recognizer ends. The final Whisper transcript
-      // always remains the authoritative source of truth.
-      if (
-        [
-          "not-allowed",
-          "service-not-allowed",
-          "language-not-supported",
-          "network",
-        ].includes(event.error)
-      ) {
-        liveRecognitionActiveRef.current = false;
-        setLiveTranscriptSupported(false);
-      }
+      if (!liveRecognitionActiveRef.current) return;
+      liveRecognitionActiveRef.current = false;
+      liveRecognitionRef.current = null;
+      setLiveTranscriptSupported(false);
+      setLiveTranscriptStatus(
+        event.error === "not-allowed" || event.error === "service-not-allowed"
+          ? "permission"
+          : "network",
+      );
+      startLocalWhisperPreview(generation);
     };
     recognition.onend = () => {
-      if (!liveRecognitionActiveRef.current) return;
+      if (
+        !liveRecognitionActiveRef.current ||
+        livePreviewGenerationRef.current !== generation
+      ) {
+        return;
+      }
       try {
         recognition.start();
       } catch {
         liveRecognitionActiveRef.current = false;
+        liveRecognitionRef.current = null;
         setLiveTranscriptSupported(false);
+        setLiveTranscriptStatus("network");
+        startLocalWhisperPreview(generation);
       }
     };
-    liveRecognitionRef.current = recognition;
-    liveRecognitionActiveRef.current = true;
-    setLiveTranscriptSupported(true);
+
     try {
       recognition.start();
     } catch {
       liveRecognitionActiveRef.current = false;
+      liveRecognitionRef.current = null;
       setLiveTranscriptSupported(false);
+      setLiveTranscriptStatus("network");
+      startLocalWhisperPreview(generation);
     }
   }
 
   function stopLiveTranscription() {
+    livePreviewActiveRef.current = false;
+    livePreviewGenerationRef.current += 1;
+    livePreviewInFlightRef.current = false;
     liveRecognitionActiveRef.current = false;
     const recognition = liveRecognitionRef.current;
     liveRecognitionRef.current = null;
-    if (!recognition) return;
-    try {
+    if (recognition) {
       recognition.onend = null;
-      recognition.stop();
-    } catch {
-      // The recognizer may already be stopped.
+      recognition.onerror = null;
+      try {
+        recognition.stop();
+      } catch {
+        // The browser recognizer may already be stopped.
+      }
+    }
+    if (livePreviewTimerRef.current !== null) {
+      window.clearInterval(livePreviewTimerRef.current);
+      livePreviewTimerRef.current = null;
     }
   }
 
@@ -427,6 +542,7 @@ export function ExecutiveDashboard({
     setTranscript("");
     setLiveTranscript("");
     setLiveTranscriptSupported(false);
+    setLiveTranscriptStatus("starting");
     setTranscription(null);
     setExtraction(null);
     setClarificationState("idle");
@@ -469,8 +585,9 @@ export function ExecutiveDashboard({
       recorder.onstop = () => void processRecording(recorder.mimeType);
       recorder.start(250);
       setVoiceState("recording");
-      setLiveTranscript("");
-      startLiveTranscription();
+       setRecordingStartedAt(Date.now());
+       setRecordingElapsedSeconds(0);
+       setLiveTranscript("");
     } catch {
       setMessage(
         "Microphone access was not available. Check the browser permission and try again.",
@@ -480,10 +597,22 @@ export function ExecutiveDashboard({
 
   function stopRecording() {
     stopLiveTranscription();
+    setRecordingStartedAt(null);
     if (recorderRef.current?.state === "recording") {
       recorderRef.current.stop();
       setVoiceState("transcribing");
     }
+  }
+
+  function cancelRecording() {
+    stopLiveTranscription();
+    setRecordingStartedAt(null);
+    const recorder = recorderRef.current;
+    if (recorder?.state === "recording") {
+      recorder.onstop = null;
+      recorder.stop();
+    }
+    resetVoice();
   }
 
   async function processRecording(mimeType: string) {
@@ -500,7 +629,7 @@ export function ExecutiveDashboard({
       setTranscription(result);
       setTranscript(result.text);
       if (!result.text) {
-        setVoiceState("review");
+        setVoiceState("idle");
         setMessage("No clear speech was detected. Record again in a quieter area.");
         return;
       }
@@ -519,8 +648,11 @@ export function ExecutiveDashboard({
     streamRef.current = null;
     chunksRef.current = [];
     stopLiveTranscription();
+    setRecordingStartedAt(null);
+    setRecordingElapsedSeconds(0);
     setLiveTranscript("");
     setLiveTranscriptSupported(false);
+    setLiveTranscriptStatus("starting");
     setVoiceState("idle");
     setVoiceOrigin("home");
     setTranscript("");
@@ -536,6 +668,7 @@ export function ExecutiveDashboard({
     setEvidenceFile(null);
     setEvidenceMessage("");
     setEvidenceAttached(false);
+    setShowEvidenceRequiredModal(false);
     clientRequestIdRef.current = null;
     setMessage("");
     window.speechSynthesis?.cancel();
@@ -560,14 +693,16 @@ export function ExecutiveDashboard({
   }
 
   async function uploadEvidencePhoto() {
-    if (!submittedTransaction || !evidenceFile) return;
+    if (!evidenceFile) return;
     setEvidenceUploading(true);
     setEvidenceMessage("");
     try {
-      await uploadTransactionEvidence(submittedTransaction.id, evidenceFile, evidenceFile.name);
+      const transaction = await createPendingTransactionDraft();
+      await uploadTransactionEvidence(transaction.id, evidenceFile, evidenceFile.name);
+      setSubmissionState("idle");
       setEvidencePreview(null);
       setEvidenceFile(null);
-      setEvidenceMessage("Photo evidence attached to the update. The manager will see it during review.");
+      setEvidenceMessage("Photo evidence uploaded. You can confirm the damage update now.");
       setEvidenceAttached(true);
     } catch (error) {
       setEvidenceMessage(
@@ -848,7 +983,7 @@ export function ExecutiveDashboard({
       setExtractionDurationMs(null);
       setVoiceState("review");
       setMessage(
-        "AI extraction was not available. Check Ollama and try again.",
+        "Inventory extraction is unavailable right now. Try again, or enter the item details manually.",
       );
     }
   }
@@ -882,8 +1017,37 @@ export function ExecutiveDashboard({
     window.speechSynthesis?.speak(createGuidanceUtterance(statement));
   }
 
+  async function createPendingTransactionDraft() {
+    if (submittedTransaction) return submittedTransaction;
+    if (!extraction) throw new Error("The inventory details are not ready yet.");
+
+    setSubmissionState("creating");
+    clientRequestIdRef.current ??= `voice-${crypto.randomUUID()}`;
+    const recountTaskId =
+      activeVoiceTask?.type === "RECOUNT" && activeVoiceTask.source === "ASSIGNED"
+        ? activeVoiceTask.id
+        : undefined;
+    const assignedTaskId =
+      activeVoiceTask?.source === "ASSIGNED" && activeVoiceTask.type !== "RECOUNT"
+        ? activeVoiceTask.id
+        : undefined;
+    const transaction = await createPendingInventoryTransaction(
+      extraction,
+      clientRequestIdRef.current,
+      recountTaskId,
+      assignedTaskId,
+    );
+    setSubmittedTransaction(transaction);
+    return transaction;
+  }
+
   async function confirmProposal() {
     if (!extraction?.readyForConfirmation) return;
+    if (extraction.fields.action === "DAMAGE" && !evidenceAttached) {
+      setEvidenceMessage("A photo is required before a damage update can be confirmed.");
+      setShowEvidenceRequiredModal(true);
+      return;
+    }
     if (insufficientStockNotice) {
       setMessage(
         `Insufficient available stock. Requested ${insufficientStockNotice.requested}; available ${insufficientStockNotice.available}. Correct the quantity before confirming.`,
@@ -894,29 +1058,7 @@ export function ExecutiveDashboard({
     try {
       let transaction = submittedTransaction;
       if (!transaction) {
-        setSubmissionState("creating");
-        clientRequestIdRef.current ??= `voice-${crypto.randomUUID()}`;
-        // A recount task keeps its link to the original discrepancy case: the
-        // transaction is created with the task id so the backend resolves the
-        // original case instead of creating an unrelated duplicate.
-        const recountTaskId =
-          activeVoiceTask?.type === "RECOUNT" && activeVoiceTask.source === "ASSIGNED"
-            ? activeVoiceTask.id
-            : undefined;
-        // Every assigned task is linked to the inventory transaction. The
-        // backend validates the protected task details and completes the task
-        // in the same database operation that posts or submits the result.
-        const assignedTaskId =
-          activeVoiceTask?.source === "ASSIGNED" && activeVoiceTask.type !== "RECOUNT"
-            ? activeVoiceTask.id
-            : undefined;
-        transaction = await createPendingInventoryTransaction(
-          extraction,
-          clientRequestIdRef.current,
-          recountTaskId,
-          assignedTaskId,
-        );
-        setSubmittedTransaction(transaction);
+        transaction = await createPendingTransactionDraft();
       }
       setSubmissionState("confirming");
       const result = await confirmInventoryTransaction(transaction.id);
@@ -943,11 +1085,12 @@ export function ExecutiveDashboard({
           setActiveVoiceTask(null);
         }
       }
-      setMessage(`${
+      const confirmationMessage =
         result.outcome === "POSTED"
           ? "Warehouse Executive confirmation complete. The validated stock movement was posted."
-          : "Warehouse Executive confirmation complete. No stock changed; this transaction is waiting for manager review."
-      }${taskCompletionMessage}`);
+          : "Warehouse Executive confirmation complete. No stock changed; this transaction is waiting for manager review.";
+      resetVoice();
+      setMessage(`${confirmationMessage}${taskCompletionMessage} Ready for a new voice command.`);
     } catch (error) {
       const networkUnavailable =
         !navigator.onLine || error instanceof TypeError;
@@ -1027,8 +1170,9 @@ export function ExecutiveDashboard({
         void processClarificationRecording(recorder.mimeType);
       recorder.start(250);
       setClarificationState("recording");
-      setLiveTranscript("");
-      startLiveTranscription();
+       setRecordingStartedAt(Date.now());
+       setRecordingElapsedSeconds(0);
+       setLiveTranscript("");
     } catch {
       setMessage(
         "Microphone access was not available. Check the browser permission and try again.",
@@ -1038,6 +1182,7 @@ export function ExecutiveDashboard({
 
   function stopClarificationRecording() {
     stopLiveTranscription();
+    setRecordingStartedAt(null);
     if (recorderRef.current?.state === "recording") {
       recorderRef.current.stop();
       setClarificationState("transcribing");
@@ -1506,26 +1651,16 @@ export function ExecutiveDashboard({
     setSpeakerStatus("Test message played");
   }
 
-  // Route to page components for non-voice-entry pages
-  if (page === "Home" || page === "Overview") {
-    return (
-      <ExecutiveHome
-        workerName={workerName}
-        workerGreeting={workerGreeting}
-        clockNow={clockNow}
-        snapshot={snapshot}
-        todayTransactions={todayTransactions}
-        cycleCountsToday={cycleCountsToday}
-        postedToday={postedToday}
-        workerTasks={workerTasks}
-        onNavigate={onNavigate}
-        onStartVoiceWorkflow={startWorkflowFromHome}
-        newTaskAlert={newTaskAlert}
-        setNewTaskAlert={setNewTaskAlert}
-      />
-    );
-  }
+  const voiceFlowStep =
+    voiceState === "extracting"
+      ? 1
+      : voiceState === "extracted"
+        ? 2
+        : voiceState === "review"
+          ? 1
+          : 0;
 
+  // Route to page components for non-voice-entry pages
   if (page === "Task queue") {
     return (
       <ExecutiveTaskQueue
@@ -1540,12 +1675,14 @@ export function ExecutiveDashboard({
         onStartTask={(taskId) => void startAssignedTask(taskId)}
         onCompleteTask={(taskId) => void completeAssignedTask(taskId)}
         onOpenRecount={openRecountInVoice}
-        onBack={() => { onNavigate("Home"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+        onBack={() => { onNavigate("Overview"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
       />
     );
   }
 
-  if (page === "History") {
+  // "My history" is the older label for the same screen — both resolve here so
+  // deep links from notifications and inventory search stay valid.
+  if (page === "History" || page === "My history") {
     const reviewActions = ["Cycle count", "Damage"];
     const pendingTxs = allWorkerTransactions.filter(
       (transaction) =>
@@ -1577,7 +1714,17 @@ export function ExecutiveDashboard({
             "The pending transaction could not be found. Refresh the page and try again.",
           );
         }}
-        onBack={() => { onNavigate("Home"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+        onBack={() => { onNavigate("Overview"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+      />
+    );
+  }
+
+  if (page === "Active items") {
+    return (
+      <ExecutiveActiveItems
+        snapshot={snapshot}
+        message={message}
+        onBack={() => { onNavigate("Overview"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
       />
     );
   }
@@ -1594,7 +1741,28 @@ export function ExecutiveDashboard({
         onCheckMicrophone={() => void checkMicrophoneAccess()}
         onTestSpeaker={testSpeaker}
         onSignOut={() => onSignOut?.()}
-        onBack={() => { onNavigate("Home"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+        onBack={() => { onNavigate("Overview"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+      />
+    );
+  }
+
+  // Anything that is neither the voice-entry screen nor a metric drill-down
+  // (including an unknown page value) renders the worker overview.
+  if (!LEGACY_ROUTED_PAGES.includes(page)) {
+    return (
+      <ExecutiveHome
+        workerName={workerName}
+        workerGreeting={workerGreeting}
+        clockNow={clockNow}
+        snapshot={snapshot}
+        todayTransactions={todayTransactions}
+        cycleCountsToday={cycleCountsToday}
+        postedToday={postedToday}
+        workerTasks={workerTasks}
+        onNavigate={onNavigate}
+        onStartVoiceWorkflow={startWorkflowFromHome}
+        newTaskAlert={newTaskAlert}
+        setNewTaskAlert={setNewTaskAlert}
       />
     );
   }
@@ -1603,13 +1771,10 @@ export function ExecutiveDashboard({
     <div className="dashboard-content page-dashboard worker-dashboard" data-active-page={page}>
       <div id="worker-overview" className="space-y-6">
         <section id="worker-overview-hero" className="hero-3d relative overflow-hidden rounded-[26px] border border-[#d9e6f8] p-6 text-white sm:p-7">
-          <div className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full border-[48px] border-white/10" />
-          <div className="pointer-events-none absolute -bottom-28 -left-16 h-64 w-64 rounded-full bg-[#6ea5ff]/30 blur-3xl" />
-          <div className="pointer-events-none absolute right-1/3 top-0 h-40 w-40 rounded-full bg-white/10 blur-2xl" />
           <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#c4d8ff] backdrop-blur">
-                <Sparkles size={13} />
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[#c7d1e0]">
+                <Sparkles size={13} aria-hidden="true" />
                 {new Intl.DateTimeFormat("en", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(clockNow)}
               </div>
               <h1 className="mt-3 text-[24px] font-extrabold tracking-[-0.03em] sm:text-[30px]">
@@ -1624,21 +1789,21 @@ export function ExecutiveDashboard({
               </p>
             </div>
             <div className="flex flex-wrap gap-2.5">
-              <div className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-4 py-3 backdrop-blur">
+              <div className="inline-flex items-center gap-2 rounded-[10px] border border-white/10 bg-white/[0.04] px-3.5 py-2.5">
                 <Clock3 size={18} className="text-[#a9c6ff]" />
                 <div>
                   <p className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-[#9db9ef]">Live clock</p>
                   <p className="text-sm font-extrabold tabular-nums">{new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit", hour12: true }).format(clockNow)}</p>
                 </div>
               </div>
-              <div className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-4 py-3 backdrop-blur">
+              <div className="inline-flex items-center gap-2 rounded-[10px] border border-white/10 bg-white/[0.04] px-3.5 py-2.5">
                 <ClipboardCheck size={18} className="text-[#ffd08a]" />
                 <div>
                   <p className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-[#9db9ef]">Open tasks</p>
                   <p className="text-sm font-extrabold">{workerTasks.length} waiting</p>
                 </div>
               </div>
-              <div className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-4 py-3 backdrop-blur">
+              <div className="inline-flex items-center gap-2 rounded-[10px] border border-white/10 bg-white/[0.04] px-3.5 py-2.5">
                 <ShieldCheck size={18} className="text-[#9dffce]" />
                 <div>
                   <p className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-[#9db9ef]">Posted today</p>
@@ -1656,41 +1821,9 @@ export function ExecutiveDashboard({
           <MetricCard label="Posted today" value={String(postedToday)} detail="Validated inventory updates" icon={ShieldCheck} tone="green" onClick={() => { onNavigate("Posted today"); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
         </div>
 
-        <section id="worker-overview-command" className="rounded-[24px] border border-[#d8e5f7] bg-white p-5 shadow-[0_18px_45px_rgba(16,42,86,0.1)]">
-          <div className="flex flex-col gap-1">
-            <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#155eef]">Quick toolbar</p>
-            <h2 className="text-lg font-extrabold text-[#102a56]">Jump to any tool in one tap</h2>
-            <p className="text-xs font-semibold text-[#8294ac]">Your most-used warehouse tools, right here — no menus required.</p>
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4 xl:grid-cols-8">
-            {([
-              ["Voice entry", "Voice entry", Mic, "from-[#155eef] to-[#4a7df0]", undefined],
-              ["Task queue", "Task queue", ClipboardCheck, "from-[#7257d6] to-[#9678f2]", workerTasks.length],
-              ["Active items", "Active items", Boxes, "from-[#16865b] to-[#2fa97c]", snapshot?.products.length ?? 0],
-              ["My history", "My history", FileClock, "from-[#be185d] to-[#ec4899]", undefined],
-              ["My transactions", "My transactions", ArrowRightLeft, "from-[#d47b08] to-[#f0a13a]", todayTransactions.length],
-              ["Cycle counts", "Cycle counts", CheckCircle2, "from-[#0e7490] to-[#38bdf8]", cycleCountsToday],
-              ["Posted today", "Posted today", ShieldCheck, "from-[#16865b] to-[#22aa78]", postedToday],
-              ["Settings", "Settings", Settings, "from-[#455b78] to-[#6e86a5]", undefined],
-              ["Overview", "Home", LayoutDashboard, "from-[#4338ca] to-[#6366f1]", undefined],
-            ] as Array<[string, string, typeof Boxes, string, number | undefined]>).map(([page, label, ToolIcon, tone, count]) => (
-              <button
-                key={page}
-                type="button"
-                onClick={() => { onNavigate(page); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                className="group relative flex min-h-[88px] flex-col items-start justify-between rounded-2xl border border-[#e2e9f3] bg-[#f9fbfd] p-3 text-left transition hover:-translate-y-1 hover:border-[#b9cff0] hover:bg-white hover:shadow-[0_12px_28px_rgba(16,45,82,0.1)]"
-              >
-                <span className={`grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br ${tone} text-white shadow-[0_8px_18px_rgba(21,94,239,0.22)] transition group-hover:scale-110`}>
-                  <ToolIcon size={18} />
-                </span>
-                <span className="mt-2 text-xs font-extrabold text-[#24466f]">{label}</span>
-                {count !== undefined && count > 0 && (
-                  <span className="absolute right-2.5 top-2.5 rounded-full bg-[#fff4df] px-2 py-0.5 text-[9px] font-extrabold text-[#b36d0c]">{count}</span>
-                )}
-              </button>
-            ))}
-          </div>
-        </section>
+        {/* The quick toolbar now renders on the live worker overview
+            (ExecutiveHome → WorkerQuickToolbar) where it is actually visible;
+            this unreachable copy was left behind when the overview was split. */}
       </div>
 
       {["My transactions", "Cycle counts", "Posted today"].includes(page) && (
@@ -1727,7 +1860,7 @@ export function ExecutiveDashboard({
         </section>
       )}
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
+      <div className="mt-6 grid items-start gap-6 xl:grid-cols-[1.18fr_0.82fr]">
         <section id="voice-entry" className="scroll-mt-24 overflow-hidden rounded-[24px] border border-[#dfe8f4] bg-white shadow-[0_14px_42px_rgba(16,45,82,0.065)]">
           <div className="border-b border-[#e8edf5] px-6 py-5">
             <div className="flex items-center justify-between gap-4">
@@ -1739,6 +1872,16 @@ export function ExecutiveDashboard({
               <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${voiceState === "recording" ? "animate-pulse bg-[#ffe8e8] text-[#d94343]" : "bg-[#edf4ff] text-[#155eef]"}`}>
                 {voiceState === "extracted" ? <CheckCircle2 size={23} /> : voiceState === "extracting" ? <Sparkles size={23} /> : <Mic size={23} />}
               </div>
+            </div>
+            <div className="mt-5 grid grid-cols-3 gap-2" aria-label="Voice update steps">
+              {["Record", "AI check", "Confirm"].map((step, index) => (
+                <div key={step} className={`flex items-center gap-2 rounded-xl px-3 py-2.5 text-[10px] font-extrabold ${index <= voiceFlowStep ? "bg-[#edf4ff] text-[#155eef]" : "bg-[#f6f8fb] text-[#9aaac0]"}`}>
+                  <span className={`grid h-6 w-6 place-items-center rounded-full text-[10px] ${index < voiceFlowStep ? "bg-[#20a875] text-white" : index === voiceFlowStep ? "bg-[#155eef] text-white" : "bg-white text-[#9aaac0]"}`}>
+                    {index < voiceFlowStep ? <CheckCircle2 size={13} /> : index + 1}
+                  </span>
+                  {step}
+                </div>
+              ))}
             </div>
           </div>
 
@@ -1771,19 +1914,32 @@ export function ExecutiveDashboard({
 
           <div className="p-6">
             {voiceState === "idle" && (
-              <div className="grid place-items-center rounded-[22px] border border-dashed border-[#b9c9df] bg-[#f8fbff] px-5 py-10 text-center">
+              <div className="voice-stage">
                 <button
                   type="button"
                   onClick={() => void startRecording()}
-                  className="grid h-20 w-20 place-items-center rounded-full bg-[#155eef] text-white shadow-[0_16px_34px_rgba(21,94,239,0.28)] transition hover:scale-105"
+                  className="voice-mic-button"
                   aria-label="Start microphone recording"
                 >
-                  <Mic size={30} />
+                  <Mic size={34} />
                 </button>
-                <p className="mt-5 text-sm font-extrabold text-[#24466f]">Tap to start speaking</p>
-                <p className="mt-1 text-xs text-[#8194ae]">Your browser will request microphone permission.</p>
+                <div>
+                  <p className="text-[14px] font-bold text-[#101828]">Ready when you are</p>
+                  <p className="mx-auto mt-1 max-w-md text-[12px] leading-5 text-[#667085]">
+                    Speak one clear warehouse update. Local Whisper creates the final transcript after you stop.
+                  </p>
+                  <div className="mt-3 flex flex-wrap justify-center gap-2 text-[10px] font-extrabold">
+                    <span className="rounded-full bg-[#eaf8f1] px-3 py-1.5 text-[#16865b]">Local Whisper ready</span>
+                    <span className="rounded-full bg-[#eef4ff] px-3 py-1.5 text-[#155eef]">AI extracts automatically</span>
+                    {selectedWorkflow && (
+                      <span className="rounded-full bg-[#f5f0ff] px-3 py-1.5 text-[#7257d6]">
+                        {selectedWorkflow.replaceAll("_", " ").toLowerCase()}
+                      </span>
+                    )}
+                  </div>
+                </div>
                 {message && (
-                  <div className="mt-4 rounded-xl bg-[#fff5df] px-4 py-3 text-sm font-semibold text-[#916018]">
+                  <div className="ui-alert ui-alert-warning w-full max-w-md text-left" role="alert">
                     {message}
                   </div>
                 )}
@@ -1791,69 +1947,72 @@ export function ExecutiveDashboard({
             )}
 
             {voiceState === "recording" && (
-              <div className="grid min-h-[225px] place-items-center rounded-[22px] bg-[#fff7f7] p-5 text-center">
+              <div className="voice-stage voice-stage-recording">
                 <div className="w-full max-w-lg">
-                  <div className="mx-auto flex h-20 w-20 items-center justify-center gap-1 rounded-full bg-[#d94343] text-white shadow-[0_15px_35px_rgba(217,67,67,0.24)]">
+                  <div className="mx-auto mb-4 flex max-w-xs items-center justify-between rounded-full border border-[#f4c7c2] bg-white/80 px-4 py-2 text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#912018]">
+                    <span className="inline-flex items-center gap-2"><span className="h-2 w-2 animate-pulse rounded-full bg-[#d92d20]" /> Recording live</span>
+                    <span className="font-mono text-[12px] tracking-normal text-[#101828]">{formatRecordingDuration(recordingElapsedSeconds)}</span>
+                  </div>
+                  <div className="voice-mic-button is-recording mx-auto">
                     {[14, 28, 40, 24, 16].map((height, index) => (
-                      <span key={index} className="w-1 animate-pulse rounded-full bg-white" style={{ height }} />
+                      <span
+                        key={index}
+                        aria-hidden="true"
+                        className={`wave-bar-${index + 1} w-1 rounded-full bg-white`}
+                        style={{ height }}
+                      />
                     ))}
                   </div>
-                  <p className="mt-5 text-sm font-extrabold text-[#7d2c2c]">Recording from your microphone…</p>
-                  <p className="mt-1 text-xs text-[#a45a5a]">Speak clearly, then stop the recording.</p>
-                  {(liveTranscriptSupported || liveTranscript) && (
-                    <div className="mt-5 rounded-2xl border border-[#f3c6c6] bg-white p-4 text-left shadow-[0_8px_22px_rgba(201,63,63,0.08)]">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#a45a5a]">Live transcript</p>
-                        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#d94343] px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-white">
-                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
-                          Live
-                        </span>
-                      </div>
-                      <p className="mt-2 min-h-[3.5rem] text-sm font-semibold leading-6 text-[#5b2b2b]">
-                        {liveTranscript || "Listening for speech…"}
-                        {liveTranscript && <span className="ml-0.5 inline-block h-4 w-[2px] animate-pulse rounded-full bg-[#d94343] align-middle" />}
-                      </p>
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    onClick={stopRecording}
-                    className="mt-5 rounded-xl bg-[#c93f3f] px-5 py-3 text-sm font-extrabold text-white shadow-[0_10px_24px_rgba(201,63,63,0.2)]"
-                  >
-                    Stop recording
-                  </button>
+                  <p className="mt-4 text-[14px] font-bold text-[#912018]">Recording from your microphone…</p>
+                  <p className="mt-1 text-[12px] text-[#b42318]">Speak clearly, then stop the recording.</p>
+                  <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-center">
+                    <button
+                      type="button"
+                      onClick={cancelRecording}
+                      className="ui-btn ui-btn-lg w-full sm:w-auto"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={stopRecording}
+                      className="ui-btn ui-btn-lg w-full bg-[#d92d20] text-white hover:bg-[#b42318] sm:w-auto"
+                    >
+                      Stop recording
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
 
             {voiceState === "transcribing" && (
-              <div className="grid min-h-[225px] place-items-center rounded-[22px] bg-[#f6f9ff] text-center">
+              <div className="voice-stage">
                 <div>
-                  <div className="mx-auto grid h-20 w-20 animate-pulse place-items-center rounded-full bg-[#155eef] text-white shadow-[0_15px_35px_rgba(21,94,239,0.22)]">
+                  <div className="voice-state-icon animate-processing mx-auto bg-[#155eef]">
                     <Sparkles size={28} />
                   </div>
-                  <p className="mt-5 text-sm font-extrabold text-[#24466f]">Whisper is transcribing…</p>
+                  <p className="mt-4 text-[14px] font-bold text-[#101828]">Creating your transcript…</p>
                   <p className="mt-1 text-xs text-[#8194ae]">The first recording may take longer while the model loads.</p>
                 </div>
               </div>
             )}
 
             {voiceState === "extracting" && (
-              <div className="grid min-h-[225px] place-items-center rounded-[22px] bg-[#f7f5ff] text-center">
+              <div className="voice-stage">
                 <div>
-                  <div className="mx-auto grid h-20 w-20 animate-pulse place-items-center rounded-full bg-[#7257d6] text-white shadow-[0_15px_35px_rgba(114,87,214,0.22)]">
+                  <div className="voice-state-icon animate-processing mx-auto bg-[#5925dc]">
                     <Sparkles size={28} />
                   </div>
-                  <p className="mt-5 text-sm font-extrabold text-[#3f3470]">Qwen is extracting inventory details…</p>
+                  <p className="mt-4 text-[14px] font-bold text-[#5925dc]">Qwen is extracting inventory details…</p>
                   <p className="mt-1 text-xs text-[#8379aa]">Products and locations are checked against approved database records.</p>
                   <button
                     type="button"
                     onClick={() => {
                       resetVoice();
-                      onNavigate(voiceOrigin === "task-queue" ? "Task queue" : "Home");
+                      onNavigate(voiceOrigin === "task-queue" ? "Task queue" : "Overview");
                       window.scrollTo({ top: 0, behavior: "smooth" });
                     }}
-                    className="mt-5 rounded-xl border border-[#c9b8f0] bg-white px-5 py-3 text-sm font-extrabold text-[#5a46b0] shadow-[0_8px_20px_rgba(114,87,214,0.1)] transition hover:bg-[#f5f0ff]"
+                    className="ui-btn ui-btn-secondary mx-auto mt-4"
                   >
                     Cancel extraction
                   </button>
@@ -1863,15 +2022,15 @@ export function ExecutiveDashboard({
 
             {(voiceState === "review" || voiceState === "extracted") && (
               <div>
-                <div className="rounded-2xl border border-[#dfe7f2] bg-[#f8fafc] p-4">
-                  <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#8396b0]">Transcript</p>
+                <div className="transcript-panel">
+                  <p className="detail-grid-label">Transcript</p>
                   {voiceState === "review" ? (
                     <textarea
                       aria-label="Editable voice transcript"
                       value={transcript}
                       onChange={(event) => setTranscript(event.target.value)}
                       rows={4}
-                      className="mt-2 w-full resize-y rounded-xl border border-[#d8e2ef] bg-white px-3 py-2 text-sm font-semibold leading-6 text-[#29466f] outline-none focus:border-[#6f9cff] focus:ring-4 focus:ring-[#e7efff]"
+                      className="ui-textarea mt-2 resize-y font-medium leading-6"
                     />
                   ) : (
                     <p className="mt-2 text-sm font-semibold leading-6 text-[#29466f]">“{transcript}”</p>
@@ -1897,9 +2056,9 @@ export function ExecutiveDashboard({
                         : "—",
                     ],
                   ].map(([label, value]) => (
-                    <div key={label} className="rounded-xl border border-[#e3eaf3] px-4 py-3">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#8a9bb3]">{label}</p>
-                      <p className="mt-1 text-sm font-extrabold text-[#203f69]">{value}</p>
+                    <div key={label} className="detail-grid-cell">
+                      <p className="detail-grid-label">{label}</p>
+                      <p className="detail-grid-value">{value}</p>
                     </div>
                   ))}
                 </div>
@@ -1933,9 +2092,9 @@ export function ExecutiveDashboard({
 
                     <div className="mt-4 grid gap-3 sm:grid-cols-2">
                       {extractedDetails.map(([label, value]) => (
-                        <div key={label} className="rounded-xl border border-[#e3eaf3] bg-white px-4 py-3">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#8a9bb3]">{label}</p>
-                          <p className="mt-1 text-sm font-extrabold capitalize text-[#203f69]">{value}</p>
+                        <div key={label} className="detail-grid-cell">
+                          <p className="detail-grid-label">{label}</p>
+                          <p className="detail-grid-value capitalize">{value}</p>
                         </div>
                       ))}
                     </div>
@@ -2001,7 +2160,7 @@ export function ExecutiveDashboard({
                             <button
                               type="button"
                               onClick={() => void startClarificationRecording()}
-                              className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#155eef] px-5 py-3 text-sm font-extrabold text-white shadow-[0_10px_24px_rgba(21,94,239,0.2)] sm:w-auto"
+                              className="ui-btn ui-btn-lg ui-btn-primary w-full sm:w-auto"
                             >
                               <Mic size={17} />
                               Answer this question by voice
@@ -2012,19 +2171,11 @@ export function ExecutiveDashboard({
                               <button
                                 type="button"
                                 onClick={stopClarificationRecording}
-                                className="flex w-full animate-pulse items-center justify-center gap-2 rounded-xl bg-[#c93f3f] px-5 py-3 text-sm font-extrabold text-white sm:w-auto"
+                                className="ui-btn ui-btn-lg ui-btn-danger-solid w-full animate-processing sm:w-auto"
                               >
                                 <Mic size={17} />
                                 Stop answer recording
                               </button>
-                              {(liveTranscriptSupported || liveTranscript) && (
-                                <div className="mt-3 rounded-xl border border-[#f3c6c6] bg-white px-3 py-2.5 text-left">
-                                  <p className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#a45a5a]">Live answer</p>
-                                  <p className="mt-1 text-sm font-semibold leading-6 text-[#5b2b2b]">
-                                    {liveTranscript || "Listening for your answer…"}
-                                  </p>
-                                </div>
-                              )}
                             </div>
                           )}
                           {clarificationState === "transcribing" && (
@@ -2049,14 +2200,14 @@ export function ExecutiveDashboard({
                     <button
                       type="button"
                       onClick={resetVoice}
-                      className="rounded-xl border border-[#d8e1ee] px-5 py-3 text-sm font-extrabold text-[#536b8b] hover:bg-[#f7f9fc]"
+                      className="ui-btn ui-btn-lg ui-btn-secondary"
                     >
                       Record again
                     </button>
                     <button
                       type="button"
                       onClick={() => void saveTranscript()}
-                      className="flex items-center justify-center gap-2 rounded-xl bg-[#7257d6] px-5 py-3 text-sm font-extrabold text-white shadow-[0_10px_24px_rgba(114,87,214,0.2)]"
+                      className="ui-btn ui-btn-lg ui-btn-primary"
                     >
                       <Sparkles size={17} />
                       Extract inventory details
@@ -2065,11 +2216,10 @@ export function ExecutiveDashboard({
                 ) : (
                   <div className="mt-5">
                     {submissionState === "complete" && (
-                      <div className={`mb-4 rounded-xl border px-4 py-3 ${
-                        confirmationOutcome === "POSTED"
-                          ? "border-[#bde5d4] bg-[#f1fbf6] text-[#176f4e]"
-                          : "border-[#f1d69a] bg-[#fff9ec] text-[#916018]"
-                      }`}>
+                      <div
+                        role="status"
+                        className={`ui-alert mb-4 ${confirmationOutcome === "POSTED" ? "ui-alert-success" : "ui-alert-warning"}`}
+                      >
                         <p className="text-sm font-extrabold">
                           {confirmationOutcome === "POSTED"
                             ? "Transaction posted"
@@ -2080,9 +2230,51 @@ export function ExecutiveDashboard({
                         </p>
                       </div>
                     )}
+                    {voiceState === "extracted" &&
+                      extraction?.readyForConfirmation &&
+                      extraction.fields.action === "DAMAGE" &&
+                      submissionState !== "complete" && (
+                        <section id="damage-evidence" className={`mb-4 rounded-xl border px-4 py-4 ${evidenceAttached ? "border-[#bde5d4] bg-[#f1fbf6]" : "border-[#f0cf8d] bg-[#fffaf0]"}`} aria-label="Required damage photo evidence">
+                          <p className={`flex items-center gap-2 text-[10px] font-extrabold uppercase tracking-[0.13em] ${evidenceAttached ? "text-[#16865b]" : "text-[#a46009]"}`}>
+                            <Camera size={13} /> Damage photo evidence
+                            {evidenceAttached && <span className="rounded-full bg-white px-2 py-0.5 text-[9px] normal-case text-[#16865b]">uploaded</span>}
+                          </p>
+                          <p className="mt-1 text-xs font-semibold leading-5 text-[#765522]">
+                            A photo of the affected stock is required before this damage update can be confirmed.
+                          </p>
+                          {evidenceAttached ? (
+                            <p className="mt-3 flex items-center gap-2 text-xs font-extrabold text-[#16865b]"><CheckCircle2 size={16} /> Evidence uploaded. Confirmation is ready.</p>
+                          ) : !evidencePreview ? (
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#e0c37e] bg-white px-3 py-2 text-[11px] font-extrabold text-[#8b5a13] transition hover:bg-[#fff5df]">
+                                <ImagePlus size={13} /> Choose photo
+                                <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" onChange={(event) => prepareEvidencePhoto(event.target.files?.[0])} />
+                              </label>
+                              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#e0c37e] bg-white px-3 py-2 text-[11px] font-extrabold text-[#8b5a13] transition hover:bg-[#fff5df]">
+                                <Camera size={13} /> Take photo
+                                <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={(event) => prepareEvidencePhoto(event.target.files?.[0])} />
+                              </label>
+                            </div>
+                          ) : (
+                            <div className="mt-3 rounded-xl border border-[#e4cf9e] bg-white p-3">
+                              {/* eslint-disable-next-line @next/next/no-img-element -- Blob URL from a local file upload cannot be optimized by next/image. */}
+                              <img src={evidencePreview} alt="Damage evidence photo preview" className="mx-auto max-h-40 rounded-lg object-contain" />
+                              <div className="mt-2 flex items-center justify-between gap-2">
+                                <p className="truncate text-[11px] font-bold text-[#6f582b]">{evidenceFile?.name}</p>
+                                <div className="flex items-center gap-2">
+                                  <button type="button" onClick={() => { setEvidencePreview(null); setEvidenceFile(null); setEvidenceMessage(""); }} className="flex items-center gap-1 rounded-lg border border-[#efb5b5] bg-[#fff6f6] px-2.5 py-1.5 text-[10px] font-extrabold text-[#b83f3f]"><Trash2 size={12} /> Remove</button>
+                                  <button type="button" onClick={() => void uploadEvidencePhoto()} disabled={evidenceUploading} className="rounded-lg bg-[#a46009] px-3 py-1.5 text-[10px] font-extrabold text-white disabled:opacity-60">{evidenceUploading ? "Uploading…" : "Upload photo"}</button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                          {evidenceMessage && !evidenceAttached && <p className="mt-2 text-[11px] font-semibold text-[#a73737]">{evidenceMessage}</p>}
+                        </section>
+                      )}
+
                     {submissionState === "complete" &&
                       submittedTransaction &&
-                      ["DAMAGE", "RECEIVE"].includes(submittedTransaction.action) && (
+                      submittedTransaction.action === "DAMAGE" && (
                         <div className="mb-4 rounded-xl border border-[#d5e1f0] bg-[#f8fbff] px-4 py-4">
                           <p className="flex items-center gap-2 text-[10px] font-extrabold uppercase tracking-[0.13em] text-[#0e7490]">
                             <Camera size={13} /> Photo evidence
@@ -2090,7 +2282,9 @@ export function ExecutiveDashboard({
                               <span className="rounded-full bg-[#eaf8f1] px-2 py-0.5 text-[9px] normal-case text-[#16865b]">attached</span>
                             )}
                           </p>
-                          {!evidencePreview ? (
+                          {evidenceAttached ? (
+                            <p className="mt-2 flex items-center gap-2 text-xs font-extrabold text-[#16865b]"><CheckCircle2 size={15} /> Photo evidence was uploaded before confirmation.</p>
+                          ) : !evidencePreview ? (
                             <div className="mt-2 flex flex-wrap items-center gap-2">
                               <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#b9d0f8] bg-white px-3 py-2 text-[11px] font-extrabold text-[#155eef] transition hover:bg-[#eaf2ff]">
                                 <ImagePlus size={13} />
@@ -2114,7 +2308,7 @@ export function ExecutiveDashboard({
                                 />
                               </label>
                               <p className="text-[10px] font-semibold text-[#8295af]">
-                                Add a photo of the {submittedTransaction.action === "RECEIVE" ? "received goods" : "affected stock"} for the manager review.
+                                Add a photo of the affected stock for the manager review.
                               </p>
                             </div>
                           ) : (
@@ -2152,7 +2346,7 @@ export function ExecutiveDashboard({
                       <button
                         type="button"
                         onClick={resetVoice}
-                        className="rounded-xl border border-[#d8e1ee] px-5 py-3 text-sm font-extrabold text-[#536b8b] hover:bg-[#f7f9fc]"
+                        className="ui-btn ui-btn-lg ui-btn-secondary"
                       >
                         Start another update
                       </button>
@@ -2171,7 +2365,7 @@ export function ExecutiveDashboard({
                             setMessage("");
                             window.speechSynthesis?.cancel();
                           }}
-                          className="flex items-center justify-center gap-2 rounded-xl border border-[#b8cae2] px-5 py-3 text-sm font-extrabold text-[#24466f]"
+                          className="ui-btn ui-btn-lg ui-btn-secondary"
                         >
                           <RefreshCcw size={16} />
                           Correct details
@@ -2183,7 +2377,7 @@ export function ExecutiveDashboard({
                             <button
                               type="button"
                               onClick={speakProposal}
-                              className="flex items-center justify-center gap-2 rounded-xl border border-[#8db0ea] bg-[#f5f8ff] px-5 py-3 text-sm font-extrabold text-[#155eef]"
+                              className="ui-btn ui-btn-lg ui-btn-secondary"
                             >
                               <Volume2 size={16} />
                               Hear full details
@@ -2195,7 +2389,7 @@ export function ExecutiveDashboard({
                                 submissionState === "creating" ||
                                 submissionState === "confirming"
                               }
-                              className="flex items-center justify-center gap-2 rounded-xl bg-[#16865b] px-5 py-3 text-sm font-extrabold text-white shadow-[0_10px_24px_rgba(22,134,91,0.22)] disabled:cursor-wait disabled:opacity-65"
+                              className="ui-btn ui-btn-lg ui-btn-success"
                             >
                               <CheckCircle2 size={17} />
                               {submissionState === "creating"
@@ -2210,7 +2404,12 @@ export function ExecutiveDashboard({
                   </div>
                 )}
                 {message && (
-                  <div className={`mt-4 rounded-xl px-4 py-3 text-sm font-semibold ${voiceState === "extracted" && extraction?.readyForConfirmation ? "bg-[#eaf8f1] text-[#176f4e]" : "bg-[#fff5df] text-[#916018]"}`}>
+                  <div
+                    role="alert"
+                    className={`ui-alert mt-4 ${
+                      voiceState === "extracted" && extraction?.readyForConfirmation ? "ui-alert-success" : "ui-alert-warning"
+                    }`}
+                  >
                     {message}
                   </div>
                 )}
@@ -2219,11 +2418,20 @@ export function ExecutiveDashboard({
           </div>
         </section>
 
-        <section className="rounded-[24px] border border-[#e0e8f3] bg-white p-6 shadow-[0_14px_42px_rgba(16,45,82,0.055)]">
-          <div className="flex items-center justify-between">
+        <TodayTaskSheet
+          tasks={workerTasks}
+          onOpenTask={(taskId) => void openTaskInVoice(taskId)}
+          onViewAll={() => {
+            onNavigate("Task queue");
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        />
+
+        <section className="rounded-[12px] border border-[#e4e7ec] bg-white p-5 shadow-[0_1px_2px_rgba(16,24,40,0.05)]">
+          <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-[11px] font-extrabold uppercase tracking-[0.15em] text-[#7288a7]">Quick actions</p>
-              <h2 className="mt-1 text-lg font-extrabold text-[#102a56]">Choose what you did</h2>
+              <p className="ui-eyebrow">Quick actions</p>
+              <h2 className="mt-1 text-[15px] font-bold text-[#101828]">Choose what you did</h2>
             </div>
             <Boxes size={21} className="text-[#155eef]" />
           </div>
@@ -2238,12 +2446,12 @@ export function ExecutiveDashboard({
               const workflow = (["RECEIVE", "SHIP", "TRANSFER", "CYCLE_COUNT", "DAMAGE"] as const)[index];
               const active = selectedWorkflow === workflow;
               return (
-              <button key={String(title)} type="button" aria-pressed={active} onClick={() => chooseWorkflow(workflow)} className={`rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md ${active ? "border-[#155eef] bg-[#f4f8ff] shadow-[0_8px_22px_rgba(21,94,239,0.12)]" : "border-[#e4eaf3] hover:border-[#b9cae2]"}`}>
-                <div className={`grid h-9 w-9 place-items-center rounded-xl ${tone}`}>
-                  <Icon size={18} />
+              <button key={String(title)} type="button" aria-pressed={active} onClick={() => chooseWorkflow(workflow)} className={`rounded-[12px] border p-4 text-left ${active ? "border-[#155eef] bg-[#eff4ff]" : "border-[#e4e7ec] hover:border-[#d0d5dd] hover:bg-[#f9fafb]"}`}>
+                <div className={`grid h-9 w-9 place-items-center rounded-[10px] ${tone}`}>
+                  <Icon size={17} aria-hidden="true" />
                 </div>
-                <p className="mt-3 text-sm font-extrabold text-[#203f69]">{String(title)}</p>
-                <p className="mt-1 text-[11px] leading-4 text-[#8294ac]">{String(detail)}</p>
+                <p className="mt-3 text-[13px] font-bold text-[#101828]">{String(title)}</p>
+                <p className="mt-1 text-[11px] leading-4 text-[#667085]">{String(detail)}</p>
               </button>
             )})}
           </div>
@@ -2402,62 +2610,23 @@ export function ExecutiveDashboard({
         </div>
       </section>
 
-      <section id="worker-active-items" className="overflow-hidden rounded-[24px] border border-[#e0e8f3] bg-white shadow-[0_14px_42px_rgba(16,45,82,0.05)]">
-        <div className="flex flex-col gap-4 border-b border-[#e9eef5] px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-[11px] font-extrabold uppercase tracking-[0.15em] text-[#16865b]">Live inventory catalogue</p>
-            <h2 className="mt-1 text-lg font-extrabold text-[#102a56]">Active items</h2>
-            <p className="mt-1 text-xs text-[#8294ac]">Current on-hand information across every warehouse location — read-only.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-2 rounded-full bg-[#eaf8f1] px-3 py-1 text-[10px] font-extrabold text-[#16865b]"><span className="h-2 w-2 animate-pulse rounded-full bg-[#20ad76]" />Live from PostgreSQL</span>
-            <span className="w-fit rounded-full bg-[#f2efff] px-3 py-1 text-xs font-extrabold text-[#6349c1]">{snapshot?.products.length ?? 0} active items</span>
-            <button type="button" onClick={() => { onNavigate("Overview"); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#c9d8ee] bg-white px-3 text-xs font-extrabold text-[#155eef]"><ChevronDown size={15} className="rotate-90" /> Back to Overview</button>
+      {showEvidenceRequiredModal && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-[#102a56]/45 p-4" role="dialog" aria-modal="true" aria-labelledby="damage-evidence-required-title">
+          <div className="w-full max-w-md rounded-[24px] border border-[#f0cf8d] bg-white p-6 shadow-[0_24px_70px_rgba(16,42,86,0.24)]">
+            <div className="flex items-start gap-3">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#fff1db] text-[#a46009]"><Camera size={21} /></span>
+              <div>
+                <h2 id="damage-evidence-required-title" className="text-lg font-extrabold text-[#17345f]">Photo evidence required</h2>
+                <p className="mt-1 text-sm font-semibold leading-5 text-[#7186a3]">Damage updates need a photo of the affected stock before the inventory change can be confirmed.</p>
+              </div>
+            </div>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setShowEvidenceRequiredModal(false)} className="ui-btn ui-btn-lg ui-btn-secondary">Close</button>
+              <button type="button" onClick={() => { setShowEvidenceRequiredModal(false); document.getElementById("damage-evidence")?.scrollIntoView({ behavior: "smooth", block: "center" }); }} className="ui-btn ui-btn-lg ui-btn-primary"><Camera size={16} /> Upload damage photo</button>
+            </div>
           </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left">
-            <thead className="bg-[#f8fafc] text-[10px] uppercase tracking-[0.12em] text-[#8597af]">
-              <tr>
-                {["SKU (primary key)", "Product", "Unit", "Locations", "Available"].map((heading) => (
-                  <th key={heading} className="whitespace-nowrap px-6 py-3 font-extrabold">{heading}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#edf1f6] text-sm">
-              {(snapshot?.products ?? []).map((product) => {
-                const productBalances = (snapshot?.balances ?? []).filter(
-                  (balance) => balance.product.id === product.id,
-                );
-                const available = productBalances.reduce(
-                  (total, balance) =>
-                    total + Math.max(0, balance.quantity - balance.reservedQuantity),
-                  0,
-                );
-                const locationCodes = productBalances.map(
-                  (balance) => balance.location.code,
-                );
-                return (
-                  <tr key={product.id} className="hover:bg-[#f7faff]">
-                    <td className="whitespace-nowrap px-6 py-4"><span className="rounded-lg border border-[#cfe0f8] bg-[#f4f8ff] px-2.5 py-1 font-mono text-xs font-extrabold text-[#155eef]">{product.sku}</span></td>
-                    <td className="whitespace-nowrap px-6 py-4 font-extrabold text-[#24466f]">{product.name}</td>
-                    <td className="whitespace-nowrap px-6 py-4 text-[#647b99]">{product.unit}</td>
-                    <td className="whitespace-nowrap px-6 py-4">{locationCodes.length > 0 ? locationCodes.map((code) => <span key={code} className="mr-1.5 inline-block rounded-full bg-[#edf4ff] px-2.5 py-1 text-[10px] font-extrabold text-[#155eef]">{code}</span>) : <span className="text-[#9aabc1]">No location</span>}</td>
-                    <td className={`whitespace-nowrap px-6 py-4 text-lg font-black ${available > 0 ? "text-[#16865b]" : "text-[#a46009]"}`}>{available}</td>
-                  </tr>
-                );
-              })}
-              {snapshot && snapshot.products.length === 0 && (
-                <tr><td colSpan={5} className="px-6 py-10 text-center text-sm font-semibold text-[#7f92aa]">No active items are in the catalogue yet.</td></tr>
-              )}
-              {!snapshot && (
-                <tr><td colSpan={5} className="px-6 py-10 text-center text-sm font-semibold text-[#7f92aa]">Loading live inventory from the warehouse service…</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
+      )}
     </div>
   );
 }

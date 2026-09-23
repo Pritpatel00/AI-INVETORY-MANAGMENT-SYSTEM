@@ -4,8 +4,9 @@ const prisma = new PrismaClient();
 
 // Fresh-start seed: this script only creates the local demonstration users.
 // Employee IDs match the Keycloak usernames (worker1, manager1, admin1) so
-// authenticated requests resolve to the same database rows the API would
-// otherwise auto-provision on first login.
+// authenticated requests resolve to pre-provisioned database rows.
+// New users are SSO-only until credentials are securely initialized. Existing
+// passwords are never overwritten. See docs/local-auth-initialization.md.
 //
 // It deliberately creates NO inventory transactions, products, balances or
 // locations. The clean product catalogue and opening balances come from
@@ -57,6 +58,7 @@ async function main() {
   });
 
   console.log("Demo users ready: worker1, manager1, admin1.");
+  console.warn("No local passwords are seeded. Use administrator legacy SSO to initialize the first administrator credential, then User Management to set manager/worker temporary passwords. See docs/local-auth-initialization.md.");
 }
 
 main()

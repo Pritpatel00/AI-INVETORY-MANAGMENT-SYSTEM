@@ -30,6 +30,22 @@ const allowedAudioTypes = new Set([
   "video/webm",
 ]);
 
+const audioUploadInterceptor = () =>
+  FileInterceptor("audio", {
+    limits: { fileSize: 20 * 1024 * 1024, files: 1 },
+    fileFilter: (_request, file, callback) => {
+      const mediaType = file.mimetype.toLowerCase().split(";", 1)[0].trim();
+      if (allowedAudioTypes.has(mediaType)) {
+        callback(null, true);
+      } else {
+        callback(
+          new BadRequestException(`Unsupported audio type: ${file.mimetype}.`),
+          false,
+        );
+      }
+    },
+  });
+
 @ApiTags("speech")
 @ApiBearerAuth()
 @Roles("worker", "manager", "administrator")
@@ -38,21 +54,7 @@ export class SpeechController {
   constructor(private readonly speechService: SpeechService) {}
 
   @Post("transcribe")
-  @UseInterceptors(
-    FileInterceptor("audio", {
-      limits: { fileSize: 20 * 1024 * 1024, files: 1 },
-      fileFilter: (_request, file, callback) => {
-        if (allowedAudioTypes.has(file.mimetype.toLowerCase())) {
-          callback(null, true);
-        } else {
-          callback(
-            new BadRequestException(`Unsupported audio type: ${file.mimetype}.`),
-            false,
-          );
-        }
-      },
-    }),
-  )
+  @UseInterceptors(audioUploadInterceptor())
   @ApiConsumes("multipart/form-data")
   @ApiBody({
     schema: {
@@ -85,5 +87,36 @@ export class SpeechController {
       request.authUser!,
       language?.toLowerCase(),
     );
+  }
+
+  @Post("preview")
+  @UseInterceptors(audioUploadInterceptor())
+  @ApiConsumes("multipart/form-data")
+  @ApiBody({
+    schema: {
+      type: "object",
+      required: ["audio"],
+      properties: {
+        audio: { type: "string", format: "binary" },
+        language: {
+          type: "string",
+          example: "en",
+          description: "Optional language hint for the live preview.",
+        },
+      },
+    },
+  })
+  @ApiOkResponse({ description: "Non-persistent Whisper preview transcript." })
+  preview(
+    @UploadedFile() audio: Express.Multer.File | undefined,
+    @Body("language") language: string | undefined,
+  ) {
+    if (!audio) throw new BadRequestException("An audio file is required.");
+    if (language && !/^[a-z]{2}$/i.test(language)) {
+      throw new BadRequestException(
+        "Language must be a two-letter code such as 'en'.",
+      );
+    }
+    return this.speechService.preview(audio, language?.toLowerCase());
   }
 }

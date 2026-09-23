@@ -2,13 +2,18 @@ import { ShieldCheck } from "lucide-react";
 
 export function LoadingState({ title, description }: { title?: string; description?: string }) {
   return (
-    <main className="grid min-h-screen place-items-center bg-[#f3f7fc] px-5 text-[#17345f]">
-      <div className="rounded-[24px] border border-[#dfe7f2] bg-white px-8 py-7 text-center shadow-[0_20px_55px_rgba(15,45,85,0.1)]">
-        <div className="mx-auto grid h-12 w-12 animate-pulse place-items-center rounded-2xl bg-[#edf4ff] text-[#155eef]">
-          <ShieldCheck size={23} />
+    <main className="grid min-h-screen place-items-center bg-[#f4f5f7] px-5 text-[#101828]" role="status" aria-live="polite">
+      <div className="rounded-[12px] border border-[#e4e7ec] bg-white px-8 py-7 text-center shadow-[0_1px_3px_rgba(16,24,40,0.08)]">
+        <div className="mx-auto grid h-11 w-11 place-items-center rounded-[10px] border border-[#e4e7ec] bg-[#f9fafb] text-[#155eef]">
+          <ShieldCheck size={21} aria-hidden="true" />
         </div>
-        <p className="mt-4 text-sm font-extrabold text-[#17345f]">{title ?? "Checking secure session\u2026"}</p>
-        <p className="mt-1 text-xs text-[#7b8fa9]">{description ?? "Connecting to Inventory Management identity services"}</p>
+        <div className="mt-4 flex items-center justify-center gap-2">
+          <span className="ui-spinner ui-spinner-dark" aria-hidden="true" />
+          <p className="text-[14px] font-bold text-[#101828]">{title ?? "Checking secure session…"}</p>
+        </div>
+        <p className="mt-1 text-[12px] text-[#667085]">
+          {description ?? "Connecting to Inventory Management identity services"}
+        </p>
       </div>
     </main>
   );

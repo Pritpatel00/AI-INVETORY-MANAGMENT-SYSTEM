@@ -379,6 +379,15 @@ export interface SpeechTranscription {
   segments: Array<{ start: number; end: number; text: string }>;
 }
 
+export interface SpeechPreview {
+  text: string;
+  language: string;
+  languageProbability: number;
+  duration: number;
+  model: string;
+  segments: Array<{ start: number; end: number; text: string }>;
+}
+
 export type InventoryExtractionAction =
   | "RECEIVE"
   | "SHIP"
@@ -568,6 +577,7 @@ export interface ApiAuthenticatedUser {
   lastLoginAt?: string | null;
   mustChangePassword: boolean;
   localAuthEnabled: boolean;
+  localPasswordInitializationAvailable?: boolean;
   authProvider: ApiAuthProvider;
 }
 export interface LocalAuthResponse {
@@ -625,6 +635,14 @@ export function changeLocalPassword(currentPassword: string, newPassword: string
 
 export function fetchAuthenticatedUser() {
   return request<ApiAuthenticatedUser>("/auth/me");
+}
+
+export function initializeAdministratorPassword(newPassword: string) {
+  return request<ApiAuthenticatedUser>("/auth/initialize-admin-password", {
+    method: "POST",
+    credentials: "include",
+    body: JSON.stringify({ newPassword }),
+  }, { csrfRequired: true });
 }
 
 async function request<T>(
@@ -1036,6 +1054,27 @@ export async function transcribeAudio(
   }
 
   return response.json() as Promise<SpeechTranscription>;
+}
+
+export async function previewTranscribeAudio(
+  audio: Blob,
+  options?: { language?: string },
+) {
+  const form = new FormData();
+  const extension = audio.type.includes("ogg") ? "ogg" : "webm";
+  form.append("audio", audio, `warehouse-preview.${extension}`);
+  if (options?.language) form.append("language", options.language);
+
+  const response = await withAuthRetry(`${API_BASE_URL}/speech/preview`, {
+    method: "POST",
+    body: form,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Speech preview failed with status ${response.status}.`);
+  }
+
+  return response.json() as Promise<SpeechPreview>;
 }
 
 export function extractInventoryDetails(input: {

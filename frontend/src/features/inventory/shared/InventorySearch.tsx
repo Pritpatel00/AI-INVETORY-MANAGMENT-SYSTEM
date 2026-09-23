@@ -43,7 +43,7 @@ export function InventorySearch({ role, onNavigate }: InventorySearchProps) {
       "admin-items": "Items",
       "manager-audit-history": "Transactions",
       "voice-entry": "Voice entry",
-      "worker-history": "My history",
+      "worker-history": "History",
     };
     onNavigate(pages[section] ?? "Overview");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -51,8 +51,8 @@ export function InventorySearch({ role, onNavigate }: InventorySearchProps) {
 
   return (
     <div className="relative hidden sm:block">
-      <div className="flex items-center gap-2 rounded-xl border border-[#dce5f1] bg-[#f8fafc] px-3 transition focus-within:border-[#8db0ea] focus-within:bg-white focus-within:shadow-[0_8px_24px_rgba(21,94,239,0.1)]">
-        <Search size={16} className="text-[#8497b0]" />
+      <div className="flex items-center gap-2 rounded-[10px] border border-[#e4e7ec] bg-[#f9fafb] px-3 transition focus-within:border-[#155eef] focus-within:bg-white focus-within:ring-2 focus-within:ring-[#d1e0ff]">
+        <Search size={15} className="text-[#667085]" aria-hidden="true" />
         <input
           value={query}
           onFocus={() => void prepareSearch()}
@@ -60,14 +60,14 @@ export function InventorySearch({ role, onNavigate }: InventorySearchProps) {
           onKeyDown={(event) => { if (event.key === "Escape") { setOpen(false); event.currentTarget.blur(); } }}
           aria-label="Search inventory"
           placeholder="Search items, locations, TX&hellip;"
-          className="h-10 w-44 bg-transparent text-xs font-semibold outline-none xl:w-60"
+          className="h-9 w-44 bg-transparent text-[12px] font-semibold outline-none xl:w-60"
         />
-        {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="text-[#8497b0] hover:text-[#155eef]"><X size={14} /></button>}
+        {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="text-[#667085] hover:text-[#155eef]"><X size={14} aria-hidden="true" /></button>}
       </div>
       {open && query.trim().length >= 2 && (
-        <div className="absolute right-0 top-12 z-50 w-[340px] overflow-hidden rounded-2xl border border-[#dce5f1] bg-white shadow-[0_18px_55px_rgba(16,45,82,0.18)]">
+        <div className="absolute right-0 top-11 z-50 w-[340px] overflow-hidden rounded-[12px] border border-[#e4e7ec] bg-white shadow-[0_12px_28px_rgba(16,24,40,0.12)]">
           {loading ? (
-            <p className="px-5 py-6 text-center text-xs font-bold text-[#7b8fa9]">Searching inventory\u2026</p>
+            <p className="px-5 py-6 text-center text-[12px] font-bold text-[#667085]">Searching inventory\u2026</p>
           ) : results.length ? (
             <div className="p-2">
               {results.map((result) => {
@@ -77,14 +77,14 @@ export function InventorySearch({ role, onNavigate }: InventorySearchProps) {
                     key={result.id}
                     type="button"
                     onClick={() => selectResult(result.section)}
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-[#f3f7ff]"
+                    className="flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left hover:bg-[#f9fafb]"
                   >
-                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#edf4ff] text-[#155eef]">
-                      <ResultIcon size={17} />
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-[#eff4ff] text-[#155eef]">
+                      <ResultIcon size={16} aria-hidden="true" />
                     </span>
                     <span className="min-w-0">
-                      <span className="block truncate text-xs font-extrabold text-[#17345f]">{result.title}</span>
-                      <span className="mt-0.5 block truncate text-[10px] font-semibold text-[#8295af]">{result.detail}</span>
+                      <span className="block truncate text-[12px] font-bold text-[#101828]">{result.title}</span>
+                      <span className="mt-0.5 block truncate text-[11px] font-semibold text-[#667085]">{result.detail}</span>
                     </span>
                   </button>
                 );
@@ -92,9 +92,9 @@ export function InventorySearch({ role, onNavigate }: InventorySearchProps) {
             </div>
           ) : (
             <div className="px-5 py-7 text-center">
-              <Search size={21} className="mx-auto text-[#9aabc1]" />
-              <p className="mt-2 text-xs font-extrabold text-[#496482]">No matching inventory records</p>
-              <p className="mt-1 text-[10px] text-[#8a9bb3]">Try a product name, SKU, location or transaction number.</p>
+              <Search size={20} className="mx-auto text-[#98a2b3]" aria-hidden="true" />
+              <p className="mt-2 text-[12px] font-bold text-[#101828]">No matching inventory records</p>
+              <p className="mt-1 text-[11px] text-[#667085]">Try a product name, SKU, location or transaction number.</p>
             </div>
           )}
         </div>

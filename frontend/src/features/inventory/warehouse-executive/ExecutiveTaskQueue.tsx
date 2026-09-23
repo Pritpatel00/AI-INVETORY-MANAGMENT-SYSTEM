@@ -57,11 +57,11 @@ export function ExecutiveTaskQueue({
 
   return (
     <section className="worker-task-screen rounded-[24px] border border-[#d8e4f3] bg-white shadow-[0_18px_48px_rgba(16,45,82,0.08)]">
-      <div className="flex flex-col gap-4 border-b border-[#e6edf6] bg-[#f7faff] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <div className="flex flex-col gap-4 border-b border-[#e4e7ec] bg-[#f9fafb] px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div>
-          <p className="text-[10px] font-extrabold uppercase tracking-[0.15em] text-[#155eef]">Task queue</p>
-          <h2 className="mt-1 text-xl font-extrabold text-[#102a56]">Work assigned to you</h2>
-          <p className="mt-1 text-xs font-semibold text-[#7b8fa9]">Only actionable tasks are shown. Pending approvals appear in History.</p>
+          <p className="ui-eyebrow">Task queue</p>
+          <h2 className="mt-1 text-[18px] font-bold text-[#101828]">Work assigned to you</h2>
+          <p className="mt-1 text-[12px] font-medium text-[#475467]">Only actionable tasks are shown. Pending approvals appear in History.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-2 rounded-full bg-[#eaf8f1] px-3 py-1 text-[10px] font-extrabold text-[#16865b]">
@@ -71,7 +71,7 @@ export function ExecutiveTaskQueue({
           <span className="w-fit rounded-full bg-[#f2efff] px-3 py-1 text-xs font-extrabold text-[#6349c1]">
             {workerTasks.length} open · {completedAssignedTasks} done
           </span>
-          <button type="button" onClick={onBack} className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#c9d8ee] bg-white px-3 text-xs font-extrabold text-[#155eef]">
+          <button type="button" onClick={onBack} className="ui-btn ui-btn-sm ui-btn-secondary">
             <ChevronDown size={15} className="rotate-90" /> Home
           </button>
         </div>
@@ -88,7 +88,7 @@ export function ExecutiveTaskQueue({
             <button
               type="button"
               onClick={onRefreshTasks}
-              className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#e3b968] bg-white px-3 text-xs font-extrabold text-[#916018] transition hover:bg-[#fff3d6]"
+              className="ui-btn ui-btn-sm ui-btn-secondary"
             >
               Refresh tasks
             </button>
@@ -183,7 +183,7 @@ export function ExecutiveTaskQueue({
                         type="button"
                         disabled={taskActionId === task.id}
                         onClick={() => void onOpenTask(task.id)}
-                        className="flex items-center gap-2 rounded-xl bg-[#155eef] px-4 py-2.5 text-xs font-extrabold text-white shadow-[0_8px_18px_rgba(21,94,239,0.22)] disabled:opacity-60"
+                        className="ui-btn ui-btn-sm ui-btn-primary"
                       >
                         <Mic size={15} />
                         Start with voice
@@ -195,7 +195,7 @@ export function ExecutiveTaskQueue({
                               type="button"
                               disabled={taskActionId === task.id}
                               onClick={() => void onStartTask(task.id)}
-                              className="flex items-center gap-2 rounded-xl border border-[#c9d8ee] bg-white px-3 py-2.5 text-xs font-extrabold text-[#155eef] disabled:opacity-60"
+                              className="ui-btn ui-btn-sm ui-btn-secondary"
                             >
                               Start task
                             </button>
@@ -205,7 +205,7 @@ export function ExecutiveTaskQueue({
                               type="button"
                               disabled={taskActionId === task.id}
                               onClick={() => void onCompleteTask(task.id)}
-                              className="flex items-center gap-2 rounded-xl bg-[#16865b] px-3 py-2.5 text-xs font-extrabold text-white shadow-[0_8px_18px_rgba(22,134,91,0.2)] disabled:opacity-60"
+                              className="ui-btn ui-btn-sm ui-btn-success"
                             >
                               Complete task
                             </button>
@@ -217,7 +217,7 @@ export function ExecutiveTaskQueue({
                     <button
                       type="button"
                       onClick={() => void onOpenRecount(task.id)}
-                      className="flex items-center gap-2 rounded-xl bg-[#d47b08] px-4 py-2.5 text-xs font-extrabold text-white shadow-[0_8px_18px_rgba(212,123,8,0.22)]"
+                      className="ui-btn ui-btn-sm ui-btn-warning-solid"
                     >
                       <Mic size={15} />
                       Start recount

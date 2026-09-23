@@ -78,6 +78,13 @@ function createService(user = makeUser()) {
 }
 
 describe("LocalAuthService", () => {
+  it.each([
+    ["ADMIN1", "ADMINISTRATOR"], ["MANAGER1", "MANAGER"], ["WORKER1", "WORKER"],
+  ])("returns the canonical role after valid local login for %s", async (employeeId, role) => {
+    const { service } = createService(makeUser({ employeeId, role }));
+    const result = await service.login({ identifier: employeeId.toLowerCase(), password: "valid-test-password" });
+    expect(result.response.user).toMatchObject({ employeeId, role });
+  });
   it("successfully logs in a local user and returns no refresh token in the response", async () => {
     const { service, sessions, prisma } = createService();
 

@@ -57,7 +57,7 @@ it only to the local faster-whisper service, saves an evidence file and stores
 its audit reference in PostgreSQL. Transcription alone never updates stock.
 
 The AI endpoint accepts a reviewed transcript and optional evidence id. It uses
-the Qwen/Qwen3-4B model through Runpod Serverless vLLM, validates the fixed
-response shape with Zod, matches products and locations to active PostgreSQL
-records, and returns clarification questions when required information is
-missing. It never creates or posts an inventory transaction.
+the local Ollama `qwen3:4b` model, validates the fixed response shape with Zod,
+matches products and locations to active PostgreSQL records, and returns
+clarification questions when required information is missing. It never creates
+or posts an inventory transaction.

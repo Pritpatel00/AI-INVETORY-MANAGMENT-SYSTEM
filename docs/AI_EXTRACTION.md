@@ -13,7 +13,7 @@ control.
 3. The web application sends the transcript and optional evidence id to the
    protected NestJS endpoint.
 4. The API loads the approved active products and locations from PostgreSQL.
-5. Qwen 3 extracts a fixed JSON response through Runpod Serverless vLLM.
+5. Local Ollama Qwen 3 extracts a fixed JSON response.
 6. Zod rejects malformed or additional fields.
 7. The API matches the suggested SKU and location codes to database records.
 8. Action-specific rules keep only required source and destination locations.
@@ -52,7 +52,7 @@ control.
 ## Safety controls
 
 - The endpoint requires a valid Keycloak token and inventory role.
-- The model runs through the configured Runpod Serverless vLLM endpoint.
+- The model runs through the configured local Ollama service.
 - The model must return the fixed JSON schema.
 - Zod validates types, allowed actions, lengths and confidence values.
 - Product and location values must exist as active PostgreSQL records.
@@ -119,49 +119,41 @@ This is vocabulary normalization, not permission for the model to invent an
 action. The complete proposal still requires worker confirmation, and
 different cycle-count and damage actions still require manager review.
 
-## Runpod configuration
+## Local Ollama configuration
 
 ```text
-RUNPOD_API_KEY=
-RUNPOD_ENDPOINT_ID=
-RUNPOD_MODEL=Qwen/Qwen3-4B
-RUNPOD_NUM_CTX=2048
-RUNPOD_NUM_PREDICT=256
+OLLAMA_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=qwen3:4b
+OLLAMA_KEEP_ALIVE=30m
+OLLAMA_NUM_CTX=2048
+OLLAMA_NUM_PREDICT=256
 ```
 
-`RUNPOD_API_KEY` is server-only and must never be exposed through frontend
-environment variables. The API sends the existing system/user messages to
-Runpod's `/runsync` endpoint with deterministic sampling, a bounded output,
-and the fixed JSON schema as a vLLM structured-output constraint. The endpoint
-should be configured with `MAX_MODEL_LEN` large enough for
-`RUNPOD_NUM_CTX + RUNPOD_NUM_PREDICT` (2304 with the defaults), plus any
-additional deployment headroom.
+Ollama runs on the local machine and must have the `qwen3:4b` model installed.
+The API sends the existing system/user messages to Ollama's `/api/chat` endpoint
+with deterministic sampling, a bounded output, and the fixed JSON schema.
 
-## Runpod tuning
+## Local Ollama tuning
 
-Extraction latency comes from the Runpod worker cold start and model
-generation, not the database or the API. The request uses temperature 0, a
-fixed seed, a bounded context/output, and a fixed JSON schema. The main
-deployment levers are:
+Extraction latency comes from local model loading and generation, not the
+database or the API. The request uses temperature 0, a fixed seed, a bounded
+context/output, and a fixed JSON schema. The main tuning levers are:
 
-- **`RUNPOD_MODEL`** — the deployed Hugging Face model identifier. Keep it
-  aligned with the model configured on the vLLM endpoint; the default is
-  `Qwen/Qwen3-4B`.
-- **`RUNPOD_NUM_PREDICT`** (default `256`) — caps the generated JSON length.
+- **`OLLAMA_MODEL`** — the locally installed model name; the default is
+  `qwen3:4b`.
+- **`OLLAMA_NUM_PREDICT`** (default `256`) — caps the generated JSON length.
   The extraction answer is small (including the free-text notes field), so
   this stops a slow tail. Raise it if a very long note ever gets cut off.
-- **`RUNPOD_NUM_CTX`** (default `2048`) — bounds prompt tokens sent to the
-  worker. Set the endpoint's `MAX_MODEL_LEN` higher than this value to leave
-  room for generated tokens, and increase both values if the active
-  product/location catalogue becomes large.
-- **Runpod endpoint worker settings** — use model caching and an appropriate
-  GPU/worker size to reduce cold-start time. Keep `MAX_MODEL_LEN` large enough
-  for the complete catalog prompt plus the generated response.
+- **`OLLAMA_NUM_CTX`** (default `2048`) — bounds prompt tokens sent to the
+  local model. Increase it if the active product/location catalogue becomes
+  large.
+- **`OLLAMA_KEEP_ALIVE`** (default `30m`) — keeps the model warm between
+  warehouse commands and avoids repeated model loading.
 
-Check Runpod AI availability:
+Check local Ollama availability:
 
 ```powershell
-npm run ai:runpod:check
+npm run ai:local:check
 ```
 
 Repeat the five authenticated extraction cases:

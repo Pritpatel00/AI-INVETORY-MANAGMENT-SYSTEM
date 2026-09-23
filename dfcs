@@ -1,0 +1,32 @@
+[1mdiff --git a/backend/api/Dockerfile b/backend/api/Dockerfile[m
+[1mindex 8038edd..3bf9c4f 100644[m
+[1m--- a/backend/api/Dockerfile[m
+[1m+++ b/backend/api/Dockerfile[m
+[36m@@ -16,6 +16,8 @@[m [mRUN apt-get update && apt-get install -y --no-install-recommends openssl \[m
+ [m
+ # --- deps ---[m
+ FROM base AS deps[m
+[32m+[m[32mRUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \[m
+[32m+[m[32m    && rm -rf /var/lib/apt/lists/*[m
+ COPY package.json ./package.json[m
+ COPY backend/api/package.json backend/api/package-lock.json ./backend/api/[m
+ WORKDIR /repo/backend/api[m
+[36m@@ -32,6 +34,8 @@[m [mRUN npm run build[m
+ [m
+ # --- prod deps only (smaller runtime image) ---[m
+ FROM base AS prod-deps[m
+[32m+[m[32mRUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \[m
+[32m+[m[32m    && rm -rf /var/lib/apt/lists/*[m
+ COPY package.json ./package.json[m
+ COPY backend/api/package.json backend/api/package-lock.json ./backend/api/[m
+ WORKDIR /repo/backend/api[m
+[36m@@ -46,9 +50,6 @@[m [mFROM node:22.13-bookworm-slim AS runtime[m
+ WORKDIR /app[m
+ RUN apt-get update && apt-get install -y --no-install-recommends \[m
+     openssl \[m
+[31m-    python3 \[m
+[31m-    make \[m
+[31m-    g++ \[m
+     && rm -rf /var/lib/apt/lists/*[m
+ ENV NODE_ENV=production[m
+ RUN groupadd --system nirka && useradd --system --gid nirka --home /app nirka[m

@@ -31,19 +31,13 @@ describe("AiService deterministic extraction", () => {
   let service: AiService;
   let fetchSpy: jest.SpyInstance;
   const originalAiEnv = {
-    apiKey: process.env.RUNPOD_API_KEY,
-    endpointId: process.env.RUNPOD_ENDPOINT_ID,
-    model: process.env.RUNPOD_MODEL,
-    numPredict: process.env.RUNPOD_NUM_PREDICT,
-    numCtx: process.env.RUNPOD_NUM_CTX,
+    url: process.env.OLLAMA_URL,
+    model: process.env.OLLAMA_MODEL,
   };
 
   beforeEach(() => {
-    process.env.RUNPOD_API_KEY = "runpod-test-key";
-    process.env.RUNPOD_ENDPOINT_ID = "test-endpoint";
-    process.env.RUNPOD_MODEL = "Qwen/Qwen3-4B";
-    process.env.RUNPOD_NUM_PREDICT = "256";
-    process.env.RUNPOD_NUM_CTX = "2048";
+    process.env.OLLAMA_URL = "http://ollama.test";
+    process.env.OLLAMA_MODEL = "qwen3:4b";
     const prisma = {
       user: {
         findUnique: jest.fn().mockResolvedValue({
@@ -72,11 +66,10 @@ describe("AiService deterministic extraction", () => {
 
   afterEach(() => {
     fetchSpy.mockRestore();
-    process.env.RUNPOD_API_KEY = originalAiEnv.apiKey;
-    process.env.RUNPOD_ENDPOINT_ID = originalAiEnv.endpointId;
-    process.env.RUNPOD_MODEL = originalAiEnv.model;
-    process.env.RUNPOD_NUM_PREDICT = originalAiEnv.numPredict;
-    process.env.RUNPOD_NUM_CTX = originalAiEnv.numCtx;
+    if (originalAiEnv.url === undefined) delete process.env.OLLAMA_URL;
+    else process.env.OLLAMA_URL = originalAiEnv.url;
+    if (originalAiEnv.model === undefined) delete process.env.OLLAMA_MODEL;
+    else process.env.OLLAMA_MODEL = originalAiEnv.model;
   });
 
   it.each([
@@ -116,7 +109,7 @@ describe("AiService deterministic extraction", () => {
       1,
     ],
   ])(
-    "extracts %s without calling Runpod",
+    "extracts %s without calling local Ollama",
     async (transcript, action, source, destination, quantity) => {
       const result = await service.extractInventory({ transcript }, actor);
 
@@ -171,41 +164,33 @@ describe("AiService deterministic extraction", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("uses Qwen when a reference must be extracted", async () => {
+  it("uses local Ollama when a reference must be extracted", async () => {
     fetchSpy.mockResolvedValue({
       ok: true,
       json: async () => ({
-        status: "COMPLETED",
-        output: [
-          {
-            choices: [
-              {
-                tokens: [
-                  JSON.stringify({
-                    action: "SHIP",
-                    productSku: "ITEM-108",
-                    quantity: 1,
-                    quantityKnown: true,
-                    sourceLocationCode: "L001",
-                    destinationLocationCode: "",
-                    condition: "GOOD",
-                    referenceNumber: "ORDER-1001",
-                    notes: "",
-                    fieldConfidence: {
-                      action: 1,
-                      product: 1,
-                      quantity: 1,
-                      sourceLocation: 1,
-                      destinationLocation: 0,
-                      condition: 1,
-                      referenceNumber: 1,
-                    },
-                  }),
-                ],
-              },
-            ],
-          },
-        ],
+        model: "qwen3:4b",
+        message: {
+          content: JSON.stringify({
+                action: "SHIP",
+                productSku: "ITEM-108",
+                quantity: 1,
+                quantityKnown: true,
+                sourceLocationCode: "L001",
+                destinationLocationCode: "",
+                condition: "GOOD",
+                referenceNumber: "ORDER-1001",
+                notes: "",
+                fieldConfidence: {
+                  action: 1,
+                  product: 1,
+                  quantity: 1,
+                  sourceLocation: 1,
+                  destinationLocation: 0,
+                  condition: 1,
+                  referenceNumber: 1,
+                },
+          }),
+        },
       }),
     } as Response);
 
@@ -217,68 +202,104 @@ describe("AiService deterministic extraction", () => {
       actor,
     );
 
-    expect(result.model).toBe("Qwen/Qwen3-4B");
+    expect(result.model).toBe("qwen3:4b");
     expect(result.fields.referenceNumber).toBe("ORDER-1001");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     const [url, request] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe(
-      "https://api.runpod.ai/v2/test-endpoint/runsync",
-    );
-    expect(request.headers).toEqual({
-      Authorization: "Bearer runpod-test-key",
-      "Content-Type": "application/json",
-    });
+    expect(url).toBe("http://ollama.test/api/chat");
+    expect(request.headers).toEqual({ "Content-Type": "application/json" });
     const body = JSON.parse(String(request.body));
-    expect(String(request.body)).not.toContain("runpod-test-key");
-    expect(body.input.messages).toHaveLength(2);
-    expect(body.input.sampling_params).toMatchObject({
-      temperature: 0,
-      seed: 42,
-      max_tokens: 256,
-      truncate_prompt_tokens: 2048,
-      chat_template_kwargs: { enable_thinking: false },
-      structured_outputs: { json: expect.any(Object) },
+    expect(body).toMatchObject({
+      model: "qwen3:4b",
+      stream: false,
+      think: false,
+      format: expect.any(Object),
+      options: {
+        temperature: 0,
+        seed: 42,
+        num_predict: 256,
+        num_ctx: 2048,
+      },
     });
-    expect(body.input).not.toHaveProperty("keep_alive");
-    expect(body.input).not.toHaveProperty("format");
+    expect(body.messages).toHaveLength(2);
+    expect(body.messages[1].role).toBe("user");
+    expect(body.messages[1].content).toContain("Transcript:");
+  });
+
+  it("reads the extraction out of a fenced Ollama reply", async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        model: "qwen3:4b",
+        message: {
+          content: [
+                "Here is the extraction:\n```json\n",
+                JSON.stringify({
+                  action: "SHIP",
+                  productSku: "ITEM-108",
+                  quantity: 1,
+                  quantityKnown: true,
+                  sourceLocationCode: "L001",
+                  destinationLocationCode: "",
+                  condition: "GOOD",
+                  referenceNumber: "ORDER-2002",
+                  notes: "",
+                  fieldConfidence: {
+                    action: 1,
+                    product: 1,
+                    quantity: 1,
+                    sourceLocation: 1,
+                    destinationLocation: 0,
+                    condition: 1,
+                    referenceNumber: 1,
+                  },
+                }),
+                "\n```",
+          ].join(""),
+        },
+      }),
+    } as Response);
+
+    const result = await service.extractInventory(
+      {
+        transcript:
+          "Shipped one unit of Cable from Storage 1 for ORDER-2002.",
+      },
+      actor,
+    );
+
+    expect(result.model).toBe("qwen3:4b");
+    expect(result.fields.referenceNumber).toBe("ORDER-2002");
   });
 
   it("accepts a bare number as the answer to a quantity clarification", async () => {
     fetchSpy.mockResolvedValue({
       ok: true,
       json: async () => ({
-        status: "COMPLETED",
-        output: [
-          {
-            choices: [
-              {
-                tokens: [
-                  JSON.stringify({
-                    action: "CYCLE_COUNT",
-                    productSku: "ITEM-108",
-                    quantity: 0,
-                    quantityKnown: false,
-                    sourceLocationCode: "L001",
-                    destinationLocationCode: "",
-                    condition: "GOOD",
-                    referenceNumber: "",
-                    notes: "",
-                    fieldConfidence: {
-                      action: 1,
-                      product: 1,
-                      quantity: 0,
-                      sourceLocation: 1,
-                      destinationLocation: 1,
-                      condition: 1,
-                      referenceNumber: 0,
-                    },
-                  }),
-                ],
-              },
-            ],
-          },
-        ],
+        model: "qwen3:4b",
+        message: {
+          content: JSON.stringify({
+                action: "CYCLE_COUNT",
+                productSku: "ITEM-108",
+                quantity: 0,
+                quantityKnown: false,
+                sourceLocationCode: "L001",
+                destinationLocationCode: "",
+                condition: "GOOD",
+                referenceNumber: "",
+                notes: "",
+                fieldConfidence: {
+                  action: 1,
+                  product: 1,
+                  quantity: 0,
+                  sourceLocation: 1,
+                  destinationLocation: 1,
+                  condition: 1,
+                  referenceNumber: 0,
+                },
+          }),
+        },
       }),
     } as Response);
 

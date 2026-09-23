@@ -118,7 +118,7 @@ Status: Complete
 
 Delivered:
 
-1. Connected the `Qwen/Qwen3-4B` model through Runpod Serverless vLLM.
+1. Connected the local Ollama `qwen3:4b` model.
 2. Added a protected transcript-extraction endpoint.
 3. Defined a fixed inventory JSON schema for every model response.
 4. Validated the model response with Zod.

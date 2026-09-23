@@ -7,7 +7,7 @@ npm run start:all
 ```
 
 The launcher starts or safely reuses PostgreSQL, Keycloak, speech-to-text,
-the Runpod-backed AI integration, the NestJS API, and the web application. It refuses to hide an
+the local Ollama AI integration, the NestJS API, and the web application. It refuses to hide an
 unhealthy process behind a required port and writes service logs to
 `.local/runtime`.
 

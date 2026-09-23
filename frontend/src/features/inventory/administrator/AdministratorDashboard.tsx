@@ -1141,7 +1141,7 @@ export function AdministratorDashboard({
                       }`}
                     >
                       <td className="px-4 py-4">
-                        <span className="inline-flex items-center gap-1.5 rounded-lg border border-[#cfe0f8] bg-[#f4f8ff] px-2.5 py-1.5 font-mono text-[11px] font-extrabold text-[#155eef]">
+                        <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-[8px] border border-[#cfe0f8] bg-[#f4f8ff] px-2 py-1 font-mono text-[11px] font-bold text-[#155eef]">
                           {product.sku}
                         </span>
                       </td>

@@ -1,9 +1,41 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import ts from "typescript";
+import vm from "node:vm";
 
 const source = async (relativePath) =>
   readFile(new URL(`../${relativePath}`, import.meta.url), "utf8");
+
+test("actual workspace mapping accepts each canonical role and rejects other workspaces", async () => {
+  const code = ts.transpileModule(await source("src/features/inventory/auth/local-auth.ts"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const context = { exports: {}, require: () => ({}) };
+  vm.runInNewContext(code, context);
+  for (const [employeeId, role, allowed] of [
+    ["ADMIN1", "ADMINISTRATOR", "administrator"],
+    ["MANAGER1", "MANAGER", "manager"],
+    ["WORKER1", "WORKER", "worker"],
+  ]) {
+    for (const workspace of ["administrator", "manager", "worker"]) {
+      assert.equal(context.exports.userCanUseWorkspace({ employeeId, role }, workspace), workspace === allowed);
+    }
+  }
+});
+
+test("administrator initialization is only offered after SSO and uses authenticated CSRF request", async () => {
+  const [app, api, form] = await Promise.all([
+    source("src/features/inventory/InventoryApp.tsx"),
+    source("src/features/inventory/api/inventory-api.ts"),
+    source("src/features/inventory/authentication/InitializeLocalPassword.tsx"),
+  ]);
+  assert.match(app, /provider === "keycloak" && user\?\.localPasswordInitializationAvailable/);
+  assert.match(api, /request<ApiAuthenticatedUser>\("\/auth\/initialize-admin-password"/);
+  assert.match(form, /minLength=\{12\}/);
+  assert.match(form, /form\.reset\(\)/);
+  assert.doesNotMatch(form, /localStorage|sessionStorage|console\./);
+});
 
 test("local auth adapter owns startup refresh and exposes canonical user state", async () => {
   const [adapter, api, app] = await Promise.all([

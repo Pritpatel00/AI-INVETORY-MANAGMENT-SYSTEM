@@ -1,4 +1,5 @@
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
+import type { AuthenticatedUser } from "./auth-user";
 
 import { PrismaService } from "../prisma/prisma.service";
 import { ACCESS_TOKEN_TTL_SECONDS } from "./auth.constants";
@@ -114,7 +115,59 @@ export class LocalAuthService {
     if (!user || !user.active) {
       throw new UnauthorizedException("This user account is not active.");
     }
-    return this.toProfile(user, provider);
+    const localPasswordInitializationAvailable = provider === "keycloak" &&
+      user.role === "ADMINISTRATOR" && !user.passwordHash &&
+      !(await this.prisma.user.count({ where: {
+        active: true, role: "ADMINISTRATOR", passwordHash: { not: null },
+      } })) && !(await this.prisma.userAccessAudit.count({ where: {
+        action: "ADMIN_LOCAL_PASSWORD_INITIALIZED",
+      } }));
+    return { ...this.toProfile(user, provider), localPasswordInitializationAvailable };
+  }
+
+  async initializeAdministratorPassword(actor: AuthenticatedUser | undefined, newPassword: string) {
+    if (!actor?.userId || actor.provider !== "keycloak" || !actor.subject ||
+        actor.role !== "ADMINISTRATOR") {
+      throw new ForbiddenException("Verified administrator SSO is required.");
+    }
+    // Hash before acquiring a short database lock; never hold it during Argon2 work.
+    const passwordHash = await this.passwords.hash(newPassword);
+    await this.prisma.$transaction(async (tx) => {
+      // Serialize bootstrap and other user writes, across API replicas. Checks
+      // below run after the lock, so two administrators cannot both bootstrap.
+      await tx.$executeRaw`LOCK TABLE public.users IN SHARE ROW EXCLUSIVE MODE`;
+      const user = await tx.user.findUnique({ where: { id: actor.userId } });
+      const existing = await tx.user.count({ where: {
+        active: true, role: "ADMINISTRATOR", passwordHash: { not: null },
+      } });
+      const previouslyInitialized = await tx.userAccessAudit.count({ where: {
+        action: "ADMIN_LOCAL_PASSWORD_INITIALIZED",
+      } });
+      if (!user || !user.active || user.role !== "ADMINISTRATOR" ||
+          user.legacyKeycloakSubject !== actor.subject || user.passwordHash !== null ||
+          existing || previouslyInitialized) {
+        throw new ForbiddenException("Administrator password initialization is unavailable.");
+      }
+      const now = new Date();
+      await tx.user.update({ where: { id: user.id }, data: {
+        passwordHash, passwordChangedAt: now, mustChangePassword: false,
+        authVersion: { increment: 1 },
+      } });
+      await tx.authSession.updateMany({ where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: now, revokedReason: "password_initialized" } });
+      // The durable audit event also prevents re-enabling bootstrap after a
+      // later deactivation. Failure to write the audit rolls back the password.
+      await tx.userAccessAudit.create({ data: {
+        action: "ADMIN_LOCAL_PASSWORD_INITIALIZED",
+        actorUsername: user.employeeId, actorEmail: user.email,
+        targetUserId: user.id, targetEmployeeId: user.employeeId,
+        targetDisplayName: user.displayName,
+        details: "Own local credential initialized through verified legacy SSO.",
+      } });
+    }, { isolationLevel: "ReadCommitted", timeout: 10000 });
+    // Keep the current SSO session; the administrator can explicitly sign out
+    // and verify local login. Never return the hash or change the SSO password.
+    return this.me(actor.userId, "keycloak");
   }
 
   async changePassword(

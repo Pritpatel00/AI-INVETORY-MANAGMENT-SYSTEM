@@ -49,21 +49,15 @@ export class HealthController {
         return false;
       }
     };
-    const runpodEndpointId = process.env.RUNPOD_ENDPOINT_ID?.trim();
-    const runpodApiKey = process.env.RUNPOD_API_KEY?.trim();
-    const runpodHealth =
-      runpodEndpointId && runpodApiKey
-        ? checkHttp(
-            `https://api.runpod.ai/v2/${encodeURIComponent(runpodEndpointId)}/health`,
-            { Authorization: `Bearer ${runpodApiKey}` },
-          )
-        : Promise.resolve(false);
+    const ollamaUrl =
+      process.env.OLLAMA_URL?.trim() ?? "http://127.0.0.1:11434";
+    const ollamaHealth = checkHttp(`${ollamaUrl}/api/tags`);
     const checkSpeech = async () => {
       try {
         const url = new URL(process.env.WHISPER_API_URL?.trim() ?? "");
         if (!["http:", "https:"].includes(url.protocol)) return false;
-        // The persistent Pod serves its health response at the API root.
-        url.pathname = url.pathname.replace(/\/+$/, "").replace(/\/transcribe$/, "") + "/";
+        // The local Faster Whisper service exposes readiness at /health.
+        url.pathname = url.pathname.replace(/\/+$/, "").replace(/\/transcribe$/, "") + "/health";
         return await checkHttp(url.toString());
       } catch {
         return false;
@@ -74,7 +68,7 @@ export class HealthController {
       checkDatabase(),
       checkHttp(process.env.KEYCLOAK_ISSUER ?? "http://localhost:8080/realms/nirka-inventory"),
       checkSpeech(),
-      runpodHealth,
+      ollamaHealth,
     ]);
     const services = [
       { key: "web", name: "Web application", status: statusOf(web), detail: web ? "Web application is responding" : "Web application cannot be reached" },
@@ -82,7 +76,7 @@ export class HealthController {
       { key: "database", name: "PostgreSQL", status: statusOf(database), detail: database ? "PostgreSQL connection is available" : "PostgreSQL cannot be reached" },
       { key: "keycloak", name: "Keycloak", status: statusOf(keycloak), detail: keycloak ? "Keycloak identity service is available" : "Keycloak cannot be reached" },
       { key: "speech", name: "Speech-to-text", status: statusOf(speech), detail: speech ? "Voice transcription service is available" : "Speech-to-text service cannot be reached" },
-      { key: "ai", name: "Runpod AI", status: statusOf(ai), detail: ai ? "Runpod model service is available" : "Runpod cannot be reached" },
+      { key: "ai", name: "Local Ollama AI", status: statusOf(ai), detail: ai ? "Local Qwen model service is available" : "Local Ollama cannot be reached" },
     ];
     return { status: services.every((service) => service.status === "healthy") ? "healthy" : "degraded", checkedAt: new Date().toISOString(), services };
   }

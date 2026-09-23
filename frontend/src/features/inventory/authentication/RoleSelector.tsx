@@ -1,4 +1,4 @@
-import { Settings, ShieldCheck, Warehouse } from "lucide-react";
+import { Check, Settings, ShieldCheck, Warehouse } from "lucide-react";
 import type { Role } from "../types";
 
 interface RoleSelectorProps {
@@ -6,57 +6,48 @@ interface RoleSelectorProps {
   setRole: (role: Role) => void;
 }
 
+const options: Array<{ role: Role; label: string; detail: string; icon: typeof Warehouse }> = [
+  { role: "worker", label: "Warehouse Executive", detail: "Count and move stock", icon: Warehouse },
+  { role: "manager", label: "Manager", detail: "Review, approve and plan stock work", icon: ShieldCheck },
+  { role: "administrator", label: "Administrator", detail: "Manage items, access and system health", icon: Settings },
+];
+
 export function RoleSelector({ role, setRole }: RoleSelectorProps) {
   return (
-    <div className="role-selector grid gap-3 sm:grid-cols-3" aria-label="Select account role">
-      <button
-        type="button"
-        onClick={() => setRole("worker")}
-        aria-pressed={role === "worker"}
-        className={`role-card rounded-2xl border p-4 text-left transition ${
-          role === "worker"
-            ? "role-card-active border-[#155eef] bg-[#edf4ff] text-[#155eef] shadow-[0_8px_20px_rgba(21,94,239,0.1)]"
-            : "role-card-idle border-[#dce5f1] bg-white text-[#617796] hover:border-[#a9c1e8]"
-        }`}
-      >
-        <span className="flex items-center gap-2 text-sm font-extrabold">
-          <Warehouse size={18} />
-          Warehouse Executive
-        </span>
-        <span className="mt-1 block text-[11px] font-semibold leading-4 opacity-80">Count and move stock</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => setRole("administrator")}
-        aria-pressed={role === "administrator"}
-        className={`role-card rounded-2xl border p-4 text-left transition ${
-          role === "administrator"
-            ? "role-card-active border-[#155eef] bg-[#edf4ff] text-[#155eef] shadow-[0_8px_20px_rgba(21,94,239,0.1)]"
-            : "role-card-idle border-[#dce5f1] bg-white text-[#617796] hover:border-[#a9c1e8]"
-        }`}
-      >
-        <span className="flex items-center gap-2 text-sm font-extrabold">
-          <Settings size={18} />
-          Administrator
-        </span>
-        <span className="mt-1 block text-[11px] font-semibold opacity-75">Configure access and system controls</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => setRole("manager")}
-        aria-pressed={role === "manager"}
-        className={`role-card rounded-2xl border p-4 text-left transition ${
-          role === "manager"
-            ? "role-card-active border-[#155eef] bg-[#edf4ff] text-[#155eef] shadow-[0_8px_20px_rgba(21,94,239,0.1)]"
-            : "role-card-idle border-[#dce5f1] bg-white text-[#617796] hover:border-[#a9c1e8]"
-        }`}
-      >
-        <span className="flex items-center gap-2 text-sm font-extrabold">
-          <ShieldCheck size={18} />
-          Manager
-        </span>
-        <span className="mt-1 block text-[11px] font-semibold leading-4 opacity-80">Review and approve</span>
-      </button>
+    <div className="grid gap-2" role="group" aria-label="Select account role">
+      {options.map(({ role: value, label, detail, icon: Icon }) => {
+        const selected = role === value;
+        return (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={selected}
+            onClick={() => setRole(value)}
+            className={`role-card flex items-center gap-3 p-3 text-left ${
+              selected ? "role-card-active" : "role-card-idle border border-[#e4e7ec] bg-white"
+            }`}
+          >
+            <span
+              className={`grid h-9 w-9 shrink-0 place-items-center rounded-[10px] ${
+                selected ? "bg-white text-[#155eef]" : "bg-[#f2f4f7] text-[#475467]"
+              }`}
+            >
+              <Icon size={17} aria-hidden="true" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className={`block text-[13px] font-bold ${selected ? "text-[#155eef]" : "text-[#101828]"}`}>{label}</span>
+              <span className="mt-0.5 block text-[11px] font-medium leading-4 text-[#667085]">{detail}</span>
+            </span>
+            <span className="shrink-0" aria-hidden="true">
+              {selected ? (
+                <Check size={16} className="text-[#155eef]" />
+              ) : (
+                <span className="block h-4 w-4 rounded-full border border-[#d0d5dd]" />
+              )}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

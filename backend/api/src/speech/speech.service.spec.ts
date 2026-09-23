@@ -29,13 +29,18 @@ describe("SpeechService persistent Whisper", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env.WHISPER_API_URL = "https://whisper.example/";
-    delete process.env.RUNPOD_API_KEY;
-    delete process.env.RUNPOD_WHISPER_ENDPOINT_ID;
+    process.env.WHISPER_API_URL = "http://127.0.0.1:5001/";
     prisma.user.findUnique.mockResolvedValue({ id: "worker-id" });
     prisma.voiceEvidence.create.mockImplementation(async ({ data }) => data);
     fetchSpy = jest.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ success: true, text: "Receive ten boxes", language: "en" }),
+      Response.json({
+        text: "Receive ten boxes",
+        language: "en",
+        languageProbability: 0.98,
+        duration: 2.4,
+        model: "base",
+        segments: [{ start: 0, end: 2.4, text: "Receive ten boxes" }],
+      }),
     );
   });
   afterEach(() => {
@@ -59,8 +64,9 @@ describe("SpeechService persistent Whisper", () => {
       expect(Buffer.from(await file.arrayBuffer())).toEqual(audio.buffer);
       expect(request.body.get("language")).toBe("en");
       expect(result).toEqual({
-        text: "Receive ten boxes", language: "en", languageProbability: 0,
-        duration: 0, model: "faster-whisper", segments: [],
+        text: "Receive ten boxes", language: "en", languageProbability: 0.98,
+        duration: 2.4, model: "base",
+        segments: [{ start: 0, end: 2.4, text: "Receive ten boxes" }],
         evidenceId: expect.any(String), storageKey: expect.any(String),
       });
       expect(writeFile).toHaveBeenCalledWith(expect.any(String), audio.buffer);
@@ -73,12 +79,26 @@ describe("SpeechService persistent Whisper", () => {
     expect(fetchSpy.mock.calls[0][1].body.has("language")).toBe(false);
   });
 
+  it("returns a non-persistent preview without resolving a user or creating evidence", async () => {
+    const result = await service().preview(audio, "en");
+
+    expect(result).toEqual({
+      text: "Receive ten boxes", language: "en", languageProbability: 0.98,
+      duration: 2.4, model: "base",
+      segments: [{ start: 0, end: 2.4, text: "Receive ten boxes" }],
+    });
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    expect(prisma.voiceEvidence.create).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
+    expect(fetchSpy.mock.calls[0][1].headers).toEqual({
+      "X-Whisper-Preview": "true",
+    });
+  });
+
   it.each([undefined, "not-a-url", "ftp://whisper.example"])(
-    "rejects missing/invalid configuration without falling back to serverless: %s", async (url) => {
+    "rejects missing/invalid local configuration: %s", async (url) => {
       if (url === undefined) delete process.env.WHISPER_API_URL;
       else process.env.WHISPER_API_URL = url;
-      process.env.RUNPOD_WHISPER_ENDPOINT_ID = "old-endpoint";
-      process.env.RUNPOD_API_KEY = "qwen-key";
       await expect(service().transcribe(audio, actor)).rejects.toBeInstanceOf(ServiceUnavailableException);
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(mkdir).not.toHaveBeenCalled();

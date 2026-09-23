@@ -21,7 +21,7 @@ import { AuthCookieService } from "./auth-cookie.service";
 import { AuthRateLimitGuard } from "./auth-rate-limit.guard";
 import { LocalAuthService } from "./local-auth.service";
 import { CreateSystemUserDto } from "./dto/create-system-user.dto";
-import { ChangePasswordDto, LoginDto } from "./dto/local-auth.dto";
+import { ChangePasswordDto, InitializeAdministratorPasswordDto, LoginDto } from "./dto/local-auth.dto";
 import { ResetSystemUserPasswordDto } from "./dto/reset-system-user-password.dto";
 import { UpdateSystemUserStatusDto } from "./dto/update-system-user-status.dto";
 import { UpdateSystemUserDto } from "./dto/update-system-user.dto";
@@ -119,6 +119,17 @@ export class AuthController {
       );
     }
     return request.authUser;
+  }
+
+  @Post("initialize-admin-password")
+  @Roles("administrator")
+  @UseGuards(AuthRateLimitGuard)
+  initializeAdministratorPassword(
+    @Body() input: InitializeAdministratorPasswordDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    this.cookies.assertCsrf(request);
+    return this.localAuth.initializeAdministratorPassword(request.authUser, input.newPassword);
   }
 
   @Post("change-password")

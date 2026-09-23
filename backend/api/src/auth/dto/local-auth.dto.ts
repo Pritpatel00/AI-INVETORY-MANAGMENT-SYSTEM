@@ -25,3 +25,10 @@ export class ChangePasswordDto {
   @MaxLength(200)
   newPassword: string;
 }
+
+export class InitializeAdministratorPasswordDto {
+  @IsString()
+  @MinLength(PASSWORD_MIN_LENGTH)
+  @MaxLength(200)
+  newPassword: string;
+}

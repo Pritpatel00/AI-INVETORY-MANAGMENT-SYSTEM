@@ -105,12 +105,22 @@ try {
         $managed.Speech = Get-ListeningProcessId -Port 5001
     }
 
-    if ($env:RUNPOD_API_KEY -and $env:RUNPOD_ENDPOINT_ID) {
-        & (Join-Path $PSScriptRoot "check-local-ai.ps1")
+    if (-not (Assert-PortAvailableOrHealthy -Name "Ollama AI" -Port 11434 -HealthUrl "http://127.0.0.1:11434/api/tags")) {
+        $ollamaCommand = Get-Command ollama -ErrorAction SilentlyContinue
+        if (-not $ollamaCommand) {
+            throw "Ollama is not installed or not on PATH. Install Ollama and run 'ollama pull qwen3:4b'."
+        }
+        $ollamaProcess = Start-ManagedProcess `
+            -Name "Ollama AI" `
+            -FilePath $ollamaCommand.Source `
+            -ArgumentList @("serve") `
+            -WorkingDirectory $projectRoot `
+            -LogName "ollama"
+        $managed.Ollama = $ollamaProcess.Id
+        Wait-ForEndpoint -Name "Ollama AI" -Url "http://127.0.0.1:11434/api/tags" -Port 11434 -Attempts 60
     }
-    else {
-        Write-Host "[skip] Runpod AI health check (RUNPOD_API_KEY/RUNPOD_ENDPOINT_ID not set)." -ForegroundColor DarkYellow
-    }
+
+    & (Join-Path $PSScriptRoot "check-local-ai.ps1")
 
     if (Get-ListeningProcessId -Port 4000) {
         if (-not (Test-HttpEndpoint -Url "http://127.0.0.1:4000/api/health")) {
@@ -122,7 +132,7 @@ try {
     else {
         & npm.cmd run api:build --silent
         if ($LASTEXITCODE -ne 0) { throw "NestJS API build failed." }
-        $apiProcess = Start-ManagedProcess -Name "NestJS API" -FilePath "node.exe" -ArgumentList @("dist/src/main.js") -WorkingDirectory (Join-Path $projectRoot "backend\api") -LogName "api"
+        $apiProcess = Start-ManagedProcess -Name "NestJS API" -FilePath "node.exe" -ArgumentList @("--env-file=.env", "dist/src/main.js") -WorkingDirectory (Join-Path $projectRoot "backend\api") -LogName "api"
         $managed.Api = $apiProcess.Id
         Wait-ForEndpoint -Name "NestJS API" -Url "http://127.0.0.1:4000/api/health" -Port 4000 -Attempts 60
     }
@@ -149,6 +159,7 @@ try {
 
     Write-Host ""
     Write-Host "Inventory Management is ready: http://localhost:3000" -ForegroundColor Green
+    Write-Host "Services: PostgreSQL 5434, Keycloak 8080, Ollama 11434, Whisper 5001, API 4000, Web 3000" -ForegroundColor DarkGray
     Write-Host "Keep this terminal open. Press Ctrl+C to stop services started by this command."
 
     while (-not (Test-Path -LiteralPath $stopFile)) {

@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from faster_whisper import WhisperModel
 
@@ -28,29 +28,39 @@ app = FastAPI(
 )
 
 
-@lru_cache(maxsize=1)
-def get_model() -> WhisperModel:
+@lru_cache(maxsize=2)
+def get_model(model_name: str) -> WhisperModel:
     return WhisperModel(
-        os.getenv("WHISPER_MODEL", "base"),
+        model_name,
         device=os.getenv("WHISPER_DEVICE", "cpu"),
         compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "int8"),
         download_root=os.getenv("WHISPER_MODEL_CACHE"),
     )
 
 
-def transcribe_file(file_path: str, language: str | None = None) -> dict[str, Any]:
+def transcribe_file(
+    file_path: str,
+    language: str | None = None,
+    preview: bool = False,
+) -> dict[str, Any]:
     # Greedy decoding (beam_size=1) is the default for fast warehouse
     # statements on CPU. Raise WHISPER_BEAM_SIZE (for example to 5) to trade
     # speed for slightly higher accuracy on longer, more ambiguous audio.
+    model_name = (
+        os.getenv("WHISPER_PREVIEW_MODEL", "tiny.en")
+        if preview
+        else os.getenv("WHISPER_MODEL", "base")
+    )
+    beam_variable = "WHISPER_PREVIEW_BEAM_SIZE" if preview else "WHISPER_BEAM_SIZE"
     try:
-        beam_size = int(os.getenv("WHISPER_BEAM_SIZE", "1"))
+        beam_size = int(os.getenv(beam_variable, "1"))
     except ValueError:
         beam_size = 1
     initial_prompt = os.getenv(
         "WHISPER_INITIAL_PROMPT",
         "Warehouse inventory. Actions: receive, ship, transfer, cycle count, damage. Items: cable, helmet, gloves, tape, box, bottle, bolt, bearing. Locations: receiving, dispatch, packing, storage one, storage two, storage three.",
     ).strip()
-    segments_iterator, information = get_model().transcribe(
+    segments_iterator, information = get_model(model_name).transcribe(
         file_path,
         beam_size=beam_size,
         vad_filter=True,
@@ -75,7 +85,7 @@ def transcribe_file(file_path: str, language: str | None = None) -> dict[str, An
         "languageProbability": round(information.language_probability, 4),
         "duration": duration,
         "segments": segments,
-        "model": os.getenv("WHISPER_MODEL", "base"),
+        "model": model_name,
     }
 
 
@@ -93,8 +103,9 @@ def health() -> dict[str, Any]:
 async def transcribe(
     audio: UploadFile = File(...),
     language: str | None = Form(default=None),
+    preview: bool = Header(default=False, alias="X-Whisper-Preview"),
 ) -> dict[str, Any]:
-    content_type = (audio.content_type or "").lower()
+    content_type = (audio.content_type or "").lower().split(";", 1)[0].strip()
     if content_type not in ALLOWED_AUDIO_TYPES:
         raise HTTPException(
             status_code=415,
@@ -125,6 +136,7 @@ async def transcribe(
             transcribe_file,
             temporary_path,
             language.lower() if language else None,
+            preview,
         )
     finally:
         if temporary_path:

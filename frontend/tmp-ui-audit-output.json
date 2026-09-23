@@ -1,0 +1,528 @@
+url        http://localhost:3000
+http       200
+load       88942ms
+title      "Inventory Management | Voice Management"
+bodyChars  78
+patchright C:\Users\Prit Patel\.vscode\extensions\danielsanmedium.dscodegpt-3.24.72\standalone/
+text       Checking secure session… Connecting to Inventory Management identity services
+script     {
+ "worker": {
+  "overview": {
+   "fullText": "Overview See today’s work, stock activity and anything that needs your attention. System online · Voice entry ready TUESDAY, SEPTEMBER 22, 2026 Good afternoon, Warehouse Executive 1 open task · 1 update posted today VOICE READY CURRENT TIME 12:52 PM OPEN TASKS 1 waiting POSTED TODAY 1 updates MY TRANSACTIONS 2 Created today VIEW DETAILS → CYCLE COUNTS 1 Submitted today VIEW DETAILS → OPEN TASKS 1 Recount action required VIEW DETAILS → POSTED TODAY 1 Validated inventory updates VIEW DETAILS → QUICK TOOLBAR Jump to any tool in one tap Your most-used warehouse tools — no menus required. Voice entry Task queue 1 Active items 3 History My transactions 2 Cycle counts 1 Posted today 1 Settings Overview QUICK ACTIONS Start a voice update Select the action you performed, then speak the details. Receive Ship Transfer Cycle count Damage",
+   "heading": "Overview",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / Overview",
+   "visibleSections": [
+    "page-title",
+    "worker-overview-command",
+    "worker-quick-toolbar-title"
+   ],
+   "contentChars": 837,
+   "contentHead": "Overview See today’s work, stock activity and anything that needs your attention. System online · Voice entry ",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Overview"
+   ]
+  },
+  "quickToolbarButtons": 9,
+  "quick:Voice entry": {
+   "fullText": "Voice entry Record one clear inventory action and review it before stock changes. System online · Voice entry ready VOICE TRANSACTION Ready for a voice update Try: “I received 50 Boxes.” Tap to start speaking One clear sentence works best. Your browser asks for microphone permission the first time. QUICK ACTIONS Choose what you did Receive stock New stock came in Ship stock Stock was dispatched Move stock Moved to another shelf Count stock Counted what is on the shelf Damage stock Report unusable stock Warehouse Executive confirmation required AI prepares the transaction. Inventory changes only after you confirm and business rules pass.",
+   "heading": "Voice entry",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / Voice entry",
+   "visibleSections": [
+    "page-title",
+    "voice-entry"
+   ],
+   "contentChars": 644,
+   "contentHead": "Voice entry Record one clear inventory action and review it before stock changes. System online · Voice entry ",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": []
+  },
+  "quick:Voice entry:apiCalls": 8,
+  "quick:Task queue": {
+   "fullText": "Task queue Complete the warehouse work assigned to you by a manager. System online · Voice entry ready TASK QUEUE Work assigned to you Only actionable tasks are shown. Pending approvals appear in History. Live · 12:52 PM 1 open · 0 done Home Cycle count · Espresso Beans 1kg Urgent Main Warehouse Aisle 1 · Espresso Beans 1kg Due Sep 22, 05:52 PM Blind count of aisle 1 shelf A. Start with voice",
+   "heading": "Task queue",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / Task queue",
+   "visibleSections": [
+    "page-title"
+   ],
+   "contentChars": 395,
+   "contentHead": "Task queue Complete the warehouse work assigned to you by a manager. System online · Voice entry ready TASK QU",
+   "pageHooks": [],
+   "hasTaskScreen": true,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Task queue\n1"
+   ]
+  },
+  "quick:Task queue:apiCalls": 8,
+  "quick:Active items": {
+   "fullText": "Active items Browse the live stock catalogue — on-hand quantity, locations and stock status, read-only. System online · Voice entry ready LIVE INVENTORY CATALOGUE Active items Current on-hand information across every warehouse location — read-only. Availability already excludes reserved stock. Live inventory data 3 active items Back to Overview Catalogue Search by SKU, product name or location code. Search active items Active items with unit, storage locations and available quantity SKU PRODUCT UNIT LOCATIONS AVAILABLE STOCK STATUS BEV-1001 Espresso Beans 1kg bag A-01 12 ! At or below safety stock PKG-2204 Corrugated Box 40x30 box No location 0 × No available units CLN-3310 Industrial Degreaser 5L can R-01 18 ! At or below safety stock",
+   "heading": "Active items",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / Active items",
+   "visibleSections": [
+    "page-title",
+    "active-items-table-title",
+    "active-items-search"
+   ],
+   "contentChars": 745,
+   "contentHead": "Active items Browse the live stock catalogue — on-hand quantity, locations and stock status, read-only. System",
+   "pageHooks": [
+    "Active items"
+   ],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Active items"
+   ]
+  },
+  "quick:Active items:apiCalls": 8,
+  "quick:History": {
+   "fullText": "History Review your submitted, posted and pending inventory updates. System online · Voice entry ready TRANSACTION HISTORY Your inventory updates Cycle counts and damage updates waiting for review, plus offline updates waiting to sync. Pending (1) Completed (1) Home Cycle count · Corrugated Box 40x30 Recount requested 60 · — · 12:52 PM Delete pending",
+   "heading": "History",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / History",
+   "visibleSections": [
+    "page-title"
+   ],
+   "contentChars": 352,
+   "contentHead": "History Review your submitted, posted and pending inventory updates. System online · Voice entry ready TRANSAC",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": true,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "History"
+   ]
+  },
+  "quick:History:apiCalls": 8,
+  "quick:My transactions": {
+   "fullText": "My transactions See every inventory transaction included in today’s total. System online · Voice entry ready DETAILED PAGE Transactions created today Every record below is included in the number shown on the Overview card. Back to Overview TRANSACTION ACTION ITEM QUANTITY LOCATION TIME STATUS CANCEL TX-76B1C1F0 Cycle count Corrugated Box 40x30 60 box Receiving Dock 12:52 PM RECOUNT REQUESTED Cancel TX-76B1C1F0 Receive Espresso Beans 1kg 12 bag Main Warehouse Aisle 1 12:52 PM POSTED —",
+   "heading": "My transactions",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / My transactions",
+   "visibleSections": [
+    "page-title",
+    "worker-metric-details"
+   ],
+   "contentChars": 488,
+   "contentHead": "My transactions See every inventory transaction included in today’s total. System online · Voice entry ready D",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": []
+  },
+  "quick:My transactions:apiCalls": 13,
+  "quick:Cycle counts": {
+   "fullText": "Cycle counts Review every physical count submitted today and its current status. System online · Voice entry ready DETAILED PAGE Cycle counts submitted today Every record below is included in the number shown on the Overview card. Back to Overview TRANSACTION ACTION ITEM QUANTITY LOCATION TIME STATUS CANCEL TX-76B1C1F0 Cycle count Corrugated Box 40x30 60 box Receiving Dock 12:52 PM RECOUNT REQUESTED Cancel",
+   "heading": "Cycle counts",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / Cycle counts",
+   "visibleSections": [
+    "page-title",
+    "worker-metric-details"
+   ],
+   "contentChars": 409,
+   "contentHead": "Cycle counts Review every physical count submitted today and its current status. System online · Voice entry r",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": []
+  },
+  "quick:Cycle counts:apiCalls": 13,
+  "quick:Posted today": {
+   "fullText": "Posted today See the validated inventory updates successfully posted today. System online · Voice entry ready DETAILED PAGE Validated transactions posted today Every record below is included in the number shown on the Overview card. Back to Overview TRANSACTION ACTION ITEM QUANTITY LOCATION TIME STATUS CANCEL TX-76B1C1F0 Receive Espresso Beans 1kg 12 bag Main Warehouse Aisle 1 12:52 PM POSTED —",
+   "heading": "Posted today",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / Posted today",
+   "visibleSections": [
+    "page-title",
+    "worker-metric-details"
+   ],
+   "contentChars": 397,
+   "contentHead": "Posted today See the validated inventory updates successfully posted today. System online · Voice entry ready ",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": []
+  },
+  "quick:Posted today:apiCalls": 13,
+  "quick:Settings": {
+   "fullText": "Settings Check your microphone, speaker and Warehouse Executive access. System online · Voice entry ready SETTINGS Warehouse Executive settings Your profile, device tests and application information. Home Warehouse Executive Warehouse Executive Online Connected Application version Nirka Inventory v0.1.0 Microphone Not checked Check microphone Speaker Test spoken guidance on this device. Test speaker Sign out End your session and return to the sign-in screen. Sign out",
+   "heading": "Settings",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / Settings",
+   "visibleSections": [
+    "page-title"
+   ],
+   "contentChars": 471,
+   "contentHead": "Settings Check your microphone, speaker and Warehouse Executive access. System online · Voice entry ready SETT",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Settings"
+   ]
+  },
+  "quick:Settings:apiCalls": 13,
+  "quick:Overview": {
+   "fullText": "Overview See today’s work, stock activity and anything that needs your attention. System online · Voice entry ready TUESDAY, SEPTEMBER 22, 2026 Good afternoon, Warehouse Executive 1 open task · 1 update posted today VOICE READY CURRENT TIME 12:52 PM OPEN TASKS 1 waiting POSTED TODAY 1 updates MY TRANSACTIONS 2 Created today VIEW DETAILS → CYCLE COUNTS 1 Submitted today VIEW DETAILS → OPEN TASKS 1 Recount action required VIEW DETAILS → POSTED TODAY 1 Validated inventory updates VIEW DETAILS → QUICK TOOLBAR Jump to any tool in one tap Your most-used warehouse tools — no menus required. Voice entry Task queue 1 Active items 3 History My transactions 2 Cycle counts 1 Posted today 1 Settings Overview QUICK ACTIONS Start a voice update Select the action you performed, then speak the details. Receive Ship Transfer Cycle count Damage",
+   "heading": "Overview",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / Overview",
+   "visibleSections": [
+    "page-title",
+    "worker-overview-command",
+    "worker-quick-toolbar-title"
+   ],
+   "contentChars": 837,
+   "contentHead": "Overview See today’s work, stock activity and anything that needs your attention. System online · Voice entry ",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Overview"
+   ]
+  },
+  "quick:Overview:apiCalls": 13,
+  "sidebar:Overview": {
+   "fullText": "Overview See today’s work, stock activity and anything that needs your attention. System online · Voice entry ready TUESDAY, SEPTEMBER 22, 2026 Good afternoon, Warehouse Executive 1 open task · 1 update posted today VOICE READY CURRENT TIME 12:52 PM OPEN TASKS 1 waiting POSTED TODAY 1 updates MY TRANSACTIONS 2 Created today VIEW DETAILS → CYCLE COUNTS 1 Submitted today VIEW DETAILS → OPEN TASKS 1 Recount action required VIEW DETAILS → POSTED TODAY 1 Validated inventory updates VIEW DETAILS → QUICK TOOLBAR Jump to any tool in one tap Your most-used warehouse tools — no menus required. Voice entry Task queue 1 Active items 3 History My transactions 2 Cycle counts 1 Posted today 1 Settings Overview QUICK ACTIONS Start a voice update Select the action you performed, then speak the details. Receive Ship Transfer Cycle count Damage",
+   "heading": "Overview",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / Overview",
+   "visibleSections": [
+    "page-title",
+    "worker-overview-command",
+    "worker-quick-toolbar-title"
+   ],
+   "contentChars": 837,
+   "contentHead": "Overview See today’s work, stock activity and anything that needs your attention. System online · Voice entry ",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Overview"
+   ]
+  },
+  "sidebar:Task queue": {
+   "fullText": "Task queue Complete the warehouse work assigned to you by a manager. System online · Voice entry ready TASK QUEUE Work assigned to you Only actionable tasks are shown. Pending approvals appear in History. Live · 12:52 PM 1 open · 0 done Home Cycle count · Espresso Beans 1kg Urgent Main Warehouse Aisle 1 · Espresso Beans 1kg Due Sep 22, 05:52 PM Blind count of aisle 1 shelf A. Start with voice",
+   "heading": "Task queue",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / Task queue",
+   "visibleSections": [
+    "page-title"
+   ],
+   "contentChars": 395,
+   "contentHead": "Task queue Complete the warehouse work assigned to you by a manager. System online · Voice entry ready TASK QU",
+   "pageHooks": [],
+   "hasTaskScreen": true,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Task queue\n1"
+   ]
+  },
+  "sidebar:Active items": {
+   "fullText": "Active items Browse the live stock catalogue — on-hand quantity, locations and stock status, read-only. System online · Voice entry ready LIVE INVENTORY CATALOGUE Active items Current on-hand information across every warehouse location — read-only. Availability already excludes reserved stock. Live inventory data 3 active items Back to Overview Catalogue Search by SKU, product name or location code. Search active items Active items with unit, storage locations and available quantity SKU PRODUCT UNIT LOCATIONS AVAILABLE STOCK STATUS BEV-1001 Espresso Beans 1kg bag A-01 12 ! At or below safety stock PKG-2204 Corrugated Box 40x30 box No location 0 × No available units CLN-3310 Industrial Degreaser 5L can R-01 18 ! At or below safety stock",
+   "heading": "Active items",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / Active items",
+   "visibleSections": [
+    "page-title",
+    "active-items-table-title",
+    "active-items-search"
+   ],
+   "contentChars": 745,
+   "contentHead": "Active items Browse the live stock catalogue — on-hand quantity, locations and stock status, read-only. System",
+   "pageHooks": [
+    "Active items"
+   ],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Active items"
+   ]
+  },
+  "sidebar:History": {
+   "fullText": "History Review your submitted, posted and pending inventory updates. System online · Voice entry ready TRANSACTION HISTORY Your inventory updates Cycle counts and damage updates waiting for review, plus offline updates waiting to sync. Pending (1) Completed (1) Home Cycle count · Corrugated Box 40x30 Recount requested 60 · — · 12:52 PM Delete pending",
+   "heading": "History",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / History",
+   "visibleSections": [
+    "page-title"
+   ],
+   "contentChars": 352,
+   "contentHead": "History Review your submitted, posted and pending inventory updates. System online · Voice entry ready TRANSAC",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": true,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "History"
+   ]
+  },
+  "sidebar:Settings": {
+   "fullText": "Settings Check your microphone, speaker and Warehouse Executive access. System online · Voice entry ready SETTINGS Warehouse Executive settings Your profile, device tests and application information. Home Warehouse Executive Warehouse Executive Online Connected Application version Nirka Inventory v0.1.0 Microphone Not checked Check microphone Speaker Test spoken guidance on this device. Test speaker Sign out End your session and return to the sign-in screen. Sign out",
+   "heading": "Settings",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / Settings",
+   "visibleSections": [
+    "page-title"
+   ],
+   "contentChars": 471,
+   "contentHead": "Settings Check your microphone, speaker and Warehouse Executive access. System online · Voice entry ready SETT",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Settings"
+   ]
+  },
+  "active-items-back": {
+   "fullText": "Overview See today’s work, stock activity and anything that needs your attention. System online · Voice entry ready TUESDAY, SEPTEMBER 22, 2026 Good afternoon, Warehouse Executive 1 open task · 1 update posted today VOICE READY CURRENT TIME 12:52 PM OPEN TASKS 1 waiting POSTED TODAY 1 updates MY TRANSACTIONS 2 Created today VIEW DETAILS → CYCLE COUNTS 1 Submitted today VIEW DETAILS → OPEN TASKS 1 Recount action required VIEW DETAILS → POSTED TODAY 1 Validated inventory updates VIEW DETAILS → QUICK TOOLBAR Jump to any tool in one tap Your most-used warehouse tools — no menus required. Voice entry Task queue 1 Active items 3 History My transactions 2 Cycle counts 1 Posted today 1 Settings Overview QUICK ACTIONS Start a voice update Select the action you performed, then speak the details. Receive Ship Transfer Cycle count Damage",
+   "heading": "Overview",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / Overview",
+   "visibleSections": [
+    "page-title",
+    "worker-overview-command",
+    "worker-quick-toolbar-title"
+   ],
+   "contentChars": 837,
+   "contentHead": "Overview See today’s work, stock activity and anything that needs your attention. System online · Voice entry ",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Overview"
+   ]
+  },
+  "historyDeleteButtons": 1,
+  "confirmDialogVisible": true,
+  "confirmDialogFocusInside": true,
+  "confirmDialogClosedByEscape": true,
+  "keyboardFocus": {
+   "label": "Voice entry",
+   "outline": "solid 2px rgb(21, 94, 239)"
+  },
+  "accountMenuVisible": true,
+  "accountMenuText": "Warehouse Executive Warehouse Executive Workspace Central Warehouse Sign-in PostgreSQL account Connection Online Sign out",
+  "floatingMicVisible": true,
+  "floating-mic": {
+   "fullText": "Voice entry Record one clear inventory action and review it before stock changes. System online · Voice entry ready VOICE TRANSACTION Ready for a voice update Try: “I received 50 Boxes.” Tap to start speaking One clear sentence works best. Your browser asks for microphone permission the first time. QUICK ACTIONS Choose what you did Receive stock New stock came in Ship stock Stock was dispatched Move stock Moved to another shelf Count stock Counted what is on the shelf Damage stock Report unusable stock Warehouse Executive confirmation required AI prepares the transaction. Inventory changes only after you confirm and business rules pass.",
+   "heading": "Voice entry",
+   "breadcrumb": "Voice entry",
+   "visibleSections": [
+    "page-title",
+    "voice-entry"
+   ],
+   "contentChars": 644,
+   "contentHead": "Voice entry Record one clear inventory action and review it before stock changes. System online · Voice entry ",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": []
+  },
+  "floatingMicStillVisible": false,
+  "dockVisible": true,
+  "dock:Overview": {
+   "fullText": "Overview See today’s work, stock activity and anything that needs your attention. System online · Voice entry ready TUESDAY, SEPTEMBER 22, 2026 Good afternoon, Warehouse Executive 1 open task · 1 update posted today CURRENT TIME 12:52 PM OPEN TASKS 1 waiting POSTED TODAY 1 updates MY TRANSACTIONS 2 Created today VIEW DETAILS → CYCLE COUNTS 1 Submitted today VIEW DETAILS → OPEN TASKS 1 Recount action required VIEW DETAILS → POSTED TODAY 1 Validated inventory updates VIEW DETAILS → QUICK TOOLBAR Jump to any tool in one tap Your most-used warehouse tools — no menus required. Voice entry Task queue 1 Active items 3 History My transactions 2 Cycle counts 1 Posted today 1 Settings Overview QUICK ACTIONS Start a voice update Select the action you performed, then speak the details. Receive Ship Transfer Cycle count Damage",
+   "heading": "Overview",
+   "breadcrumb": "Overview",
+   "visibleSections": [
+    "page-title",
+    "worker-overview-command",
+    "worker-quick-toolbar-title"
+   ],
+   "contentChars": 825,
+   "contentHead": "Overview See today’s work, stock activity and anything that needs your attention. System online · Voice entry ",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Overview"
+   ]
+  },
+  "dock:Voice": {
+   "fullText": "Voice entry Record one clear inventory action and review it before stock changes. System online · Voice entry ready VOICE TRANSACTION Ready for a voice update Try: “I received 50 Boxes.” Tap to start speaking One clear sentence works best. Your browser asks for microphone permission the first time. QUICK ACTIONS Choose what you did Receive stock New stock came in Ship stock Stock was dispatched Move stock Moved to another shelf Count stock Counted what is on the shelf Damage stock Report unusable stock Warehouse Executive confirmation required AI prepares the transaction. Inventory changes only after you confirm and business rules pass.",
+   "heading": "Voice entry",
+   "breadcrumb": "Voice entry",
+   "visibleSections": [
+    "page-title",
+    "voice-entry"
+   ],
+   "contentChars": 644,
+   "contentHead": "Voice entry Record one clear inventory action and review it before stock changes. System online · Voice entry ",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": []
+  },
+  "dock:Tasks": {
+   "fullText": "Task queue Complete the warehouse work assigned to you by a manager. System online · Voice entry ready TASK QUEUE Work assigned to you Only actionable tasks are shown. Pending approvals appear in History. Live · 12:52 PM 1 open · 0 done Home Cycle count · Espresso Beans 1kg Urgent Main Warehouse Aisle 1 · Espresso Beans 1kg Due Sep 22, 05:52 PM Blind count of aisle 1 shelf A. Start with voice",
+   "heading": "Task queue",
+   "breadcrumb": "Task queue",
+   "visibleSections": [
+    "page-title"
+   ],
+   "contentChars": 395,
+   "contentHead": "Task queue Complete the warehouse work assigned to you by a manager. System online · Voice entry ready TASK QU",
+   "pageHooks": [],
+   "hasTaskScreen": true,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Task queue\n1"
+   ]
+  },
+  "dock:History": {
+   "fullText": "History Review your submitted, posted and pending inventory updates. System online · Voice entry ready TRANSACTION HISTORY Your inventory updates Cycle counts and damage updates waiting for review, plus offline updates waiting to sync. Pending (1) Completed (1) Home Cycle count · Corrugated Box 40x30 Recount requested 60 · — · 12:52 PM Delete pending",
+   "heading": "History",
+   "breadcrumb": "History",
+   "visibleSections": [
+    "page-title"
+   ],
+   "contentChars": 352,
+   "contentHead": "History Review your submitted, posted and pending inventory updates. System online · Voice entry ready TRANSAC",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": true,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "History"
+   ]
+  },
+  "dock:Settings": {
+   "fullText": "Settings Check your microphone, speaker and Warehouse Executive access. System online · Voice entry ready SETTINGS Warehouse Executive settings Your profile, device tests and application information. Home Warehouse Executive Warehouse Executive Online Connected Application version Nirka Inventory v0.1.0 Microphone Not checked Check microphone Speaker Test spoken guidance on this device. Test speaker Sign out End your session and return to the sign-in screen. Sign out",
+   "heading": "Settings",
+   "breadcrumb": "Settings",
+   "visibleSections": [
+    "page-title"
+   ],
+   "contentChars": 471,
+   "contentHead": "Settings Check your microphone, speaker and Warehouse Executive access. System online · Voice entry ready SETT",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Settings"
+   ]
+  },
+  "mobileNavOpen": true,
+  "active-items-mobile": {
+   "heading": "Active items",
+   "pageOverflows": false,
+   "tableScrolls": true,
+   "stageWidth": 390
+  },
+  "active-items-empty": {
+   "fullText": "Active items Browse the live stock catalogue — on-hand quantity, locations and stock status, read-only. System online · Voice entry ready LIVE INVENTORY CATALOGUE Active items Current on-hand information across every warehouse location — read-only. Availability already excludes reserved stock. Live inventory data 0 active items Back to Overview Catalogue Search by SKU, product name or location code. Search active items Active items with unit, storage locations and available quantity SKU PRODUCT UNIT LOCATIONS AVAILABLE STOCK STATUS No active items yet Once products and opening balances exist, they appear here automatically.",
+   "heading": "Active items",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / Active items",
+   "visibleSections": [
+    "page-title",
+    "active-items-table-title",
+    "active-items-search"
+   ],
+   "contentChars": 631,
+   "contentHead": "Active items Browse the live stock catalogue — on-hand quantity, locations and stock status, read-only. System",
+   "pageHooks": [
+    "Active items"
+   ],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Active items"
+   ]
+  },
+  "errorStateRefreshButton": 1,
+  "error-state": {
+   "fullText": "Task queue Complete the warehouse work assigned to you by a manager. System online · Voice entry ready TASK QUEUE Work assigned to you Only actionable tasks are shown. Pending approvals appear in History. Live 0 open · 0 done Home The task service is unavailable, so this queue may be incomplete. Completed work is never recreated from history — refresh to confirm the current status. Refresh tasks The task service is unavailable. Check the API and try again — completed work is never recreated from history. No tasks assigned Assigned work appears here when a manager creates tasks for you.",
+   "heading": "Task queue",
+   "breadcrumb": "Central Warehouse / Warehouse Executive / Task queue",
+   "visibleSections": [
+    "page-title"
+   ],
+   "contentChars": 592,
+   "contentHead": "Task queue Complete the warehouse work assigned to you by a manager. System online · Voice entry ready TASK QU",
+   "pageHooks": [],
+   "hasTaskScreen": true,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Task queue"
+   ]
+  },
+  "afterSignOutHeading": "Speak the movement. Confirm the record.",
+  "afterSignOutText": "Inventory Management SECURE WAREHOUSE OPERATIONS Speak the movement. Confirm the record. Warehouse teams receive, move, count and report stock by voice. Every confirmed action is validated against Pos"
+ },
+ "manager": {
+  "overview": {
+   "fullText": "Overview Monitor approvals, stock accuracy, low-stock risks and daily priorities. System online AI WAREHOUSE COMMAND Live inventory control, made visual. Monitor stock, review exceptions and keep warehouse work moving from one clear workspace. LIVE STOCK AI ASSISTED AUDIT PROTECTED 3 PRODUCTS MONITORED ACTIVE ITEMS 3 Loaded from PostgreSQL VIEW DETAILS → PENDING APPROVALS 0 Warehouse Executive-confirmed transactions requiring review VIEW DETAILS → LOW-STOCK ITEMS 2 Calculated from safety levels VIEW DETAILS → INVENTORY HEALTH Live stock overview at a glance Availability across every product and warehouse location, refreshed from live balances. Live data 0% HEALTHY STOCK 2 stock assignments across the warehouse Stock status breakdown 2 assignments 1 CRITICAL 1 LOW 0 HEALTHY 1 item are at or below half their safety level and should be prioritised for reordering. NEEDS ATTENTION View purchase items Espresso Beans 1kg Critical BEV-1001 · 12 available / 40 safety Industrial Degreaser 5L Low CLN-3310 · 18 available / 25 safety ACTION REQUIRED Pending approvals Warehouse Executive-confirmed transactions waiting for your decision. Review all 0 No confirmed transactions need review New items requiring manager review will appear here automatically.",
+   "heading": "Overview",
+   "breadcrumb": "Central Warehouse / Inventory Manager / Overview",
+   "visibleSections": [
+    "page-title",
+    "manager-overview-hero",
+    "manager-overview-metrics",
+    "manager-overview-health",
+    "manager-overview-approvals"
+   ],
+   "contentChars": 1258,
+   "contentHead": "Overview Monitor approvals, stock accuracy, low-stock risks and daily priorities. System online AI WAREHOUSE C",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Overview"
+   ]
+  }
+ },
+ "administrator": {
+  "overview": {
+   "fullText": "Overview See user access, item availability and the health of essential services. System online TUESDAY, SEPTEMBER 22, 2026 Good afternoon, System Administrator Manage the item catalogue, user access and system health — 3 items need attention and 0 users have secure access. Refresh APPLICATION USERS 0 Authenticated users VIEW DETAILS → ACTIVE ITEMS 3 Products in catalogue VIEW DETAILS → AVAILABLE STOCK 30 Current on-hand quantity VIEW DETAILS → ITEMS BELOW SAFETY 3 Replenishment attention VIEW DETAILS → SYSTEM HEALTH Healthy Service availability VIEW DETAILS → AUDIT RECORDS 2 Recorded stock actions VIEW DETAILS → QUICK TOOLBAR Jump to any tool Items User access System health Add item Add user Refresh",
+   "heading": "Overview",
+   "breadcrumb": "Central Warehouse / System Administrator / Overview",
+   "visibleSections": [
+    "page-title",
+    "admin-overview",
+    "admin-overview-hero",
+    "admin-overview-metrics",
+    "admin-overview-command"
+   ],
+   "contentChars": 709,
+   "contentHead": "Overview See user access, item availability and the health of essential services. System online TUESDAY, SEPTE",
+   "pageHooks": [],
+   "hasTaskScreen": false,
+   "hasHistoryScreen": false,
+   "hasEmptyLookingStage": false,
+   "activeNav": [
+    "Overview"
+   ]
+  }
+ },
+ "problems": [],
+ "consoleErrors": [
+  "Failed to load resource: net::ERR_FAILED",
+  "Failed to load resource: net::ERR_FAILED"
+ ],
+ "apiHits": 109,
+ "problemCount": 0
+}
+
+console errors/warnings (2):
+  [error] Failed to load resource: net::ERR_FAILED
+  [error] Failed to load resource: net::ERR_FAILED
+
+requests failed (2):
+  net::ERR_FAILED http://localhost:4000/api/tasks

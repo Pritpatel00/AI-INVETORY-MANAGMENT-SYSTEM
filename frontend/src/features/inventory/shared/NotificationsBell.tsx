@@ -87,7 +87,7 @@ export function NotificationsBell({
     if (item.linkType === "TASK") {
       onNavigate(role === "worker" ? "Task queue" : "Task planning");
     } else {
-      onNavigate(role === "worker" ? "My history" : "Discrepancies");
+      onNavigate(role === "worker" ? "History" : "Discrepancies");
     }
   }
 
@@ -107,12 +107,12 @@ export function NotificationsBell({
         aria-label={`Notifications${unread > 0 ? `, ${unread} unread` : ""}`}
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="relative rounded-xl border border-[#dce5f1] p-2.5 text-[#6f84a3] transition hover:bg-[#f5f8fc] hover:text-[#29466f]"
+        className="relative rounded-[10px] border border-[#e4e7ec] p-2.5 text-[#667085] hover:bg-[#f9fafb] hover:text-[#101828]"
       >
-        <Bell size={18} />
+        <Bell size={17} aria-hidden="true" />
         {unread > 0 && (
           <span
-            className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#c04343] px-1 text-[9px] font-black leading-none text-white"
+            className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#b42318] px-1 text-[9px] font-bold leading-none text-white"
             title={`${unread} unread notification${unread === 1 ? "" : "s"}`}
           >
             {unread > 99 ? "99+" : unread}
@@ -131,11 +131,11 @@ export function NotificationsBell({
           <div
             role="dialog"
             aria-label="Notifications"
-            className="absolute right-0 top-[calc(100%+10px)] z-50 w-[min(92vw,360px)] overflow-hidden rounded-2xl border border-[#d8e5f7] bg-white shadow-[0_20px_55px_rgba(11,35,67,0.25)]"
-            style={{ animation: "dialog-in .22s ease both" }}
+            className="absolute right-0 top-[calc(100%+10px)] z-50 w-[min(92vw,360px)] overflow-hidden rounded-[12px] border border-[#e4e7ec] bg-white shadow-[0_12px_28px_rgba(16,24,40,0.12)]"
+            style={{ animation: "dialog-in 140ms ease both" }}
           >
-            <div className="flex items-center justify-between border-b border-[#e9eef5] bg-[#f8faff] px-4 py-3">
-              <p className="text-xs font-extrabold text-[#17345f]">
+            <div className="flex items-center justify-between border-b border-[#e4e7ec] bg-[#f9fafb] px-4 py-3">
+              <p className="text-[12px] font-bold text-[#101828]">
                 Notifications
                 {unread > 0 && (
                   <span className="ml-2 rounded-full bg-[#ffecec] px-2 py-0.5 text-[10px] font-extrabold text-[#c04343]">
@@ -148,7 +148,7 @@ export function NotificationsBell({
                   <button
                     type="button"
                     onClick={() => void markAllRead()}
-                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-extrabold text-[#155eef] transition hover:bg-[#edf4ff]"
+                    className="flex items-center gap-1 rounded-[8px] px-2 py-1 text-[11px] font-bold text-[#155eef] hover:bg-[#eff4ff]"
                   >
                     <CheckCheck size={13} /> Mark all read
                   </button>
@@ -157,29 +157,29 @@ export function NotificationsBell({
                   type="button"
                   aria-label="Close notifications"
                   onClick={() => setOpen(false)}
-                  className="rounded-lg p-1.5 text-[#8295af] transition hover:bg-[#edf1f6]"
+                  className="rounded-[8px] p-1.5 text-[#667085] hover:bg-[#f2f4f7]"
                 >
-                  <X size={15} />
+                  <X size={15} aria-hidden="true" />
                 </button>
               </div>
             </div>
 
             <div className="max-h-[55vh] overflow-y-auto">
               {loading && items.length === 0 && (
-                <p className="px-4 py-8 text-center text-xs font-semibold text-[#8295af]">
+                <p className="px-4 py-8 text-center text-[12px] font-semibold text-[#667085]">
                   Loading notifications…
                 </p>
               )}
               {error && (
-                <p className="px-4 py-6 text-center text-xs font-semibold text-[#a73737]">
+                <p className="px-4 py-6 text-center text-[12px] font-semibold text-[#b42318]" role="alert">
                   {error}
                 </p>
               )}
               {!loading && !error && items.length === 0 && (
                 <div className="px-4 py-10 text-center">
-                  <Bell size={22} className="mx-auto text-[#c9d5e4]" />
-                  <p className="mt-2 text-sm font-extrabold text-[#24466f]">No notifications</p>
-                  <p className="mt-1 text-xs text-[#7b8fa9]">
+                  <Bell size={20} className="mx-auto text-[#98a2b3]" aria-hidden="true" />
+                  <p className="mt-2 text-[13px] font-bold text-[#101828]">No notifications</p>
+                  <p className="mt-1 text-[12px] text-[#667085]">
                     Updates about discrepancies and recounts appear here.
                   </p>
                 </div>
@@ -189,19 +189,19 @@ export function NotificationsBell({
                   key={item.id}
                   type="button"
                   onClick={() => void openNotification(item)}
-                  className={`block w-full border-b border-[#eef2f7] px-4 py-3 text-left transition last:border-0 hover:bg-[#f8faff] ${
-                    item.readAt ? "opacity-75" : "bg-[#f4f9ff]"
+                  className={`block w-full border-b border-[#e4e7ec] px-4 py-3 text-left last:border-0 hover:bg-[#f9fafb] ${
+                    item.readAt ? "" : "bg-[#eff8ff]"
                   }`}
                 >
                   <p className="flex items-center justify-between gap-2">
-                    <span className="truncate text-xs font-extrabold text-[#29466f]">
+                    <span className="truncate text-[12px] font-bold text-[#101828]">
                       {notificationTypeLabel[item.type] ?? item.type.replaceAll("_", " ")}
                     </span>
-                    <span className="shrink-0 text-[9px] font-bold text-[#9aabc1]">
+                    <span className="shrink-0 text-[10px] font-semibold text-[#667085]">
                       {new Intl.DateTimeFormat("en", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(item.createdAt))}
                     </span>
                   </p>
-                  <p className="mt-1 line-clamp-2 text-[11px] font-semibold leading-4 text-[#6c829f]">
+                  <p className="mt-1 line-clamp-2 text-[11px] font-semibold leading-4 text-[#475467]">
                     {item.title} — {item.message}
                   </p>
                 </button>

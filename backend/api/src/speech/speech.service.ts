@@ -11,7 +11,7 @@ import { z } from "zod";
 import type { AuthenticatedUser } from "../auth/auth-user";
 import { PrismaService } from "../prisma/prisma.service";
 
-interface WhisperResponse {
+export interface WhisperResponse {
   text: string;
   language: string;
   languageProbability: number;
@@ -21,9 +21,21 @@ interface WhisperResponse {
 }
 
 const whisperSchema = z.object({
-  success: z.literal(true),
+  success: z.literal(true).optional(),
   text: z.string(),
   language: z.string().min(1),
+  languageProbability: z.number().min(0).max(1).optional(),
+  duration: z.number().nonnegative().optional(),
+  model: z.string().min(1).optional(),
+  segments: z
+    .array(
+      z.object({
+        start: z.number().nonnegative(),
+        end: z.number().nonnegative(),
+        text: z.string(),
+      }),
+    )
+    .optional(),
 });
 
 @Injectable()
@@ -35,11 +47,7 @@ export class SpeechService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async transcribe(
-    audio: Express.Multer.File,
-    actor: AuthenticatedUser,
-    language?: string,
-  ) {
+  private getWhisperEndpoint() {
     let endpoint: URL;
     try {
       endpoint = new URL(this.whisperApiUrl ?? "");
@@ -50,6 +58,15 @@ export class SpeechService {
     } catch {
       throw new ServiceUnavailableException("The speech-to-text service is not configured with a valid WHISPER_API_URL.");
     }
+    return endpoint;
+  }
+
+  private async requestWhisper(
+    audio: Express.Multer.File,
+    language?: string,
+    preview = false,
+  ): Promise<WhisperResponse> {
+    const endpoint = this.getWhisperEndpoint();
     const body = new FormData();
     body.append(
       "audio",
@@ -57,6 +74,61 @@ export class SpeechService {
       audio.originalname || "warehouse-recording.webm",
     );
     if (language) body.append("language", language);
+
+    let result: unknown;
+    const signal = AbortSignal.timeout(120_000);
+    try {
+      const response = await fetch(endpoint.toString(), {
+        method: "POST",
+        headers: preview ? { "X-Whisper-Preview": "true" } : undefined,
+        // fetch supplies the multipart Content-Type including its boundary.
+        body,
+        signal,
+      });
+      if (!response.ok) {
+        throw new BadGatewayException(
+          `Speech transcription failed with status ${response.status}.`,
+        );
+      }
+      try {
+        result = await response.json();
+      } catch (error) {
+        if (signal.aborted) throw error;
+        throw new BadGatewayException("The speech service returned an invalid response.");
+      }
+    } catch (error) {
+      if (error instanceof BadGatewayException) throw error;
+      throw new ServiceUnavailableException(
+        signal.aborted
+          ? "Speech transcription timed out. Please try a shorter recording."
+          : "The speech-to-text service is unavailable.",
+      );
+    }
+
+    const parsed = whisperSchema.safeParse(result);
+    if (!parsed.success) {
+      throw new BadGatewayException("Speech transcription did not return a completed, valid result.");
+    }
+    const output = parsed.data;
+    return {
+      text: output.text,
+      language: output.language,
+      languageProbability: output.languageProbability ?? 0,
+      duration: output.duration ?? 0,
+      model: output.model ?? "faster-whisper",
+      segments: output.segments ?? [],
+    };
+  }
+
+  async preview(audio: Express.Multer.File, language?: string) {
+    return this.requestWhisper(audio, language, true);
+  }
+
+  async transcribe(
+    audio: Express.Multer.File,
+    actor: AuthenticatedUser,
+    language?: string,
+  ) {
     const user = actor.email
       ? await this.prisma.user.findUnique({
           where: { email: actor.email.toLowerCase() },
@@ -70,6 +142,9 @@ export class SpeechService {
       );
     }
 
+    // Validate configuration before creating any evidence files.
+    this.getWhisperEndpoint();
+
     const extension = extname(audio.originalname).toLowerCase() || ".webm";
     const dateFolder = new Date().toISOString().slice(0, 10);
     const evidenceId = randomUUID();
@@ -79,50 +154,7 @@ export class SpeechService {
     await writeFile(evidencePath, audio.buffer);
 
     try {
-      let result: unknown;
-      const signal = AbortSignal.timeout(120_000);
-      try {
-        const response = await fetch(endpoint.toString(), {
-          method: "POST",
-          // fetch supplies the multipart Content-Type including its boundary.
-          body,
-          signal,
-        });
-        if (!response.ok) {
-          throw new BadGatewayException(
-            `Speech transcription failed with status ${response.status}.`,
-          );
-        }
-        try {
-          result = await response.json();
-        } catch (error) {
-          if (signal.aborted) throw error;
-          throw new BadGatewayException("The speech service returned an invalid response.");
-        }
-      } catch (error) {
-        if (error instanceof BadGatewayException) throw error;
-        throw new ServiceUnavailableException(
-          signal.aborted
-            ? "Speech transcription timed out. Please try a shorter recording."
-            : "The speech-to-text service is unavailable.",
-        );
-      }
-
-      const parsed = whisperSchema.safeParse(result);
-      if (!parsed.success) {
-        // Failed or malformed responses must never create transcript evidence.
-        throw new BadGatewayException("Speech transcription did not return a completed, valid result.");
-      }
-      const output = parsed.data;
-      const transcription: WhisperResponse = {
-        text: output.text,
-        language: output.language,
-        // The Pod does not return these legacy fields. Zero means unavailable.
-        languageProbability: 0,
-        duration: 0,
-        model: "faster-whisper",
-        segments: [],
-      };
+      const transcription = await this.requestWhisper(audio, language);
       const evidence = await this.prisma.voiceEvidence.create({
         data: {
           id: evidenceId,

@@ -35,8 +35,7 @@ describe("HealthController", () => {
     process.env.WEB_APP_ORIGIN = "http://localhost:3000";
     process.env.KEYCLOAK_ISSUER = "http://localhost:8080/realms/nirka-inventory";
     process.env.WHISPER_API_URL = "https://whisper.example";
-    process.env.RUNPOD_API_KEY = "runpod-test-key";
-    process.env.RUNPOD_ENDPOINT_ID = "test-endpoint";
+    process.env.OLLAMA_URL = "http://localhost:11434";
   });
 
   afterEach(() => {
@@ -81,7 +80,7 @@ describe("HealthController", () => {
         "PostgreSQL",
         "Keycloak",
         "Speech-to-text",
-        "Runpod AI",
+        "Local Ollama AI",
       ]);
       for (const service of result.services) {
         expect(service.status).toBe("healthy");
@@ -107,7 +106,7 @@ describe("HealthController", () => {
       process.env.WEB_APP_ORIGIN = "http://web.internal:4321";
       process.env.KEYCLOAK_ISSUER = "http://idp.internal:8080/realms/acme";
       process.env.WHISPER_API_URL = "http://speech.internal:9999";
-      process.env.RUNPOD_ENDPOINT_ID = "runpod.internal-endpoint";
+      process.env.OLLAMA_URL = "http://ollama.internal:11434";
       const fetchMock = jest
         .spyOn(global, "fetch")
         .mockResolvedValue(HEALTHY_RESPONSE as Response);
@@ -118,24 +117,17 @@ describe("HealthController", () => {
       const urls = fetchMock.mock.calls.map(([url]) => String(url));
       expect(urls).toContain("http://web.internal:4321");
       expect(urls).toContain("http://idp.internal:8080/realms/acme");
-      expect(urls).toContain("http://speech.internal:9999/");
-      expect(urls).toContain(
-        "https://api.runpod.ai/v2/runpod.internal-endpoint/health",
-      );
-      expect(fetchMock.mock.calls.find(([url]) =>
-        String(url).includes("runpod.internal-endpoint"),
-      )?.[1]).toMatchObject({
-        headers: { Authorization: "Bearer runpod-test-key" },
-      });
+      expect(urls).toContain("http://speech.internal:9999/health");
+      expect(urls).toContain("http://ollama.internal:11434/api/tags");
     });
 
     it.each(["https://whisper.example", "https://whisper.example/", "https://whisper.example/transcribe/"])(
-      "probes the Pod root for %s without RunPod authorization", async (url) => {
+      "probes the local Whisper health endpoint without authorization", async (url) => {
         process.env.WHISPER_API_URL = url;
         process.env.SPEECH_SERVICE_URL = "http://obsolete.example";
         const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(HEALTHY_RESPONSE as Response);
         await createController().controller.detailed();
-        expect(fetchMock).toHaveBeenCalledWith("https://whisper.example/", {
+        expect(fetchMock).toHaveBeenCalledWith("https://whisper.example/health", {
           headers: undefined, signal: expect.any(AbortSignal),
         });
         expect(fetchMock.mock.calls.some(([target]) => String(target).includes("obsolete"))).toBe(false);
@@ -163,7 +155,7 @@ describe("HealthController", () => {
       expect(result.status).toBe("degraded");
     });
 
-    it("marks Runpod AI unavailable when the model service does not respond", async () => {
+    it("marks local Ollama AI unavailable when the model service does not respond", async () => {
       jest.spyOn(global, "fetch").mockResolvedValue({ ok: false, status: 503 } as Response);
       const { controller } = createController();
 

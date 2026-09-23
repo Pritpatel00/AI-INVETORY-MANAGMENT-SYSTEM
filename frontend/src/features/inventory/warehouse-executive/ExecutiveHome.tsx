@@ -3,6 +3,7 @@
 import { Sparkles, Clock3, ClipboardCheck, ShieldCheck, ArrowRightLeft, CheckCircle2, Mic, BellRing, X, PackagePlus, ArrowUpDown, PackageMinus, AlertTriangle } from "lucide-react";
 import { MetricCard } from "../shared/MetricCard";
 import { WarehouseHero } from "../shared/WarehouseHero";
+import { WorkerQuickToolbar } from "./WorkerQuickToolbar";
 import type { InventorySnapshot } from "../api/inventory-api";
 
 export type ExecutiveVoiceWorkflow =
@@ -35,11 +36,9 @@ export function ExecutiveHome({
   return (
     <div className="space-y-6">
       <section className="hero-3d executive-hero-3d relative overflow-hidden rounded-[26px] border border-[#d9e6f8] p-6 text-white sm:p-7">
-        <div className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full border-[48px] border-white/10" />
-        <div className="pointer-events-none absolute -bottom-28 -left-16 h-64 w-64 rounded-full bg-[#6ea5ff]/30 blur-3xl" />
         <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#c4d8ff] backdrop-blur">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-[#c7d1e0]">
               <Sparkles size={13} />
               {new Intl.DateTimeFormat("en", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(clockNow)}
             </div>
@@ -58,21 +57,21 @@ export function ExecutiveHome({
               <span className="warehouse-hero-status"><span /> Voice ready</span>
             </div>
             <div className="flex flex-wrap gap-2.5">
-            <div className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-4 py-3 backdrop-blur">
+            <div className="inline-flex items-center gap-2 rounded-[10px] border border-white/10 bg-white/[0.04] px-3.5 py-2.5">
               <Clock3 size={18} className="text-[#a9c6ff]" />
               <div>
                 <p className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-[#9db9ef]">Current time</p>
                 <p className="text-sm font-extrabold tabular-nums">{new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit", hour12: true }).format(clockNow)}</p>
               </div>
             </div>
-            <div className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-4 py-3 backdrop-blur">
+            <div className="inline-flex items-center gap-2 rounded-[10px] border border-white/10 bg-white/[0.04] px-3.5 py-2.5">
               <ClipboardCheck size={18} className="text-[#ffd08a]" />
               <div>
                 <p className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-[#9db9ef]">Open tasks</p>
                 <p className="text-sm font-extrabold">{workerTasks.length} waiting</p>
               </div>
             </div>
-            <div className="inline-flex items-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-4 py-3 backdrop-blur">
+            <div className="inline-flex items-center gap-2 rounded-[10px] border border-white/10 bg-white/[0.04] px-3.5 py-2.5">
               <ShieldCheck size={18} className="text-[#9dffce]" />
               <div>
                 <p className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-[#9db9ef]">Posted today</p>
@@ -91,8 +90,17 @@ export function ExecutiveHome({
         <MetricCard label="Posted today" value={String(postedToday)} detail="Validated inventory updates" icon={ShieldCheck} tone="green" onClick={() => { onNavigate("History"); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
       </div>
 
+      <WorkerQuickToolbar
+        activeItemsCount={snapshot?.products.length ?? 0}
+        openTasksCount={workerTasks.length}
+        todayTransactionsCount={todayTransactions.length}
+        cycleCountsToday={cycleCountsToday}
+        postedToday={postedToday}
+        onNavigate={onNavigate}
+      />
+
       {newTaskAlert && (
-        <div role="status" aria-live="polite" className="flex items-start justify-between gap-4 rounded-[20px] border border-[#b9d0f8] bg-gradient-to-r from-[#edf4ff] to-[#f7faff] p-4 shadow-[0_12px_30px_rgba(21,94,239,0.09)]">
+        <div role="status" aria-live="polite" className="ui-alert ui-alert-info items-center justify-between">
           <div className="flex items-start gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#155eef] text-white"><BellRing size={19} /></span>
             <div>

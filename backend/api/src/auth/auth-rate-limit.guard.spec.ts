@@ -4,6 +4,15 @@ import { AuthRateLimitGuard } from "./auth-rate-limit.guard";
 import { AuthRateLimitService } from "./auth-rate-limit.service";
 
 describe("AuthRateLimitGuard", () => {
+  it("limits administrator initialization to five attempts per window", () => {
+    const guard = new AuthRateLimitGuard(new AuthRateLimitService());
+    const context = { switchToHttp: () => ({ getRequest: () => ({
+      path: "/api/auth/initialize-admin-password", ip: "127.0.0.1",
+      authUser: { userId: "administrator" },
+    }) }) } as never;
+    for (let attempt = 0; attempt < 5; attempt++) expect(guard.canActivate(context)).toBe(true);
+    expect(() => guard.canActivate(context)).toThrow(HttpException);
+  });
   it("limits repeated login attempts by client address", () => {
     const limiter = new AuthRateLimitService();
     const guard = new AuthRateLimitGuard(limiter);
