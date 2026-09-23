@@ -150,9 +150,12 @@ test("connects browser recording and controlled AI extraction APIs", async () =>
   assert.match(administratorDashboard, /healthTone/);
   assert.match(administratorDashboard, /Checking\.\.\./);
   assert.match(administratorDashboard, /Refresh health/);
+  // Stocked items per location are counted from positive on-hand quantity.
+  // reservedQuantity is never written after the foundation migration, so gross
+  // quantity remains the only stock figure the dashboard can filter on.
   assert.match(
     administratorDashboard,
-    /balance\.quantity > 0 \|\| balance\.reservedQuantity > 0/,
+    /balance\.location\.id === location\.id &&\s*balance\.quantity > 0/,
   );
   assert.match(administratorDashboard, /Stocked items · View/);
   assert.match(
@@ -208,7 +211,7 @@ test("connects browser recording and controlled AI extraction APIs", async () =>
   assert.doesNotMatch(apiClient, /cancelReorderDraft/);
   assert.doesNotMatch(apiClient, /queueReorderEmail/);
   assert.doesNotMatch(apiClient, /retryReorderEmail/);
-  assert.match(apiClient, /Authorization:\s*`Bearer \$\{token\}`/);
+  assert.match(apiClient, /headers\.set\("Authorization", `Bearer \$\{token\}`\)/);
   assert.match(apiClient, /withAuthRetry/);
   assert.match(apiClient, /updateToken\(60\)/);
   assert.match(offlineQueue, /indexedDB\.open/);
@@ -217,6 +220,12 @@ test("connects browser recording and controlled AI extraction APIs", async () =>
   assert.match(offlineQueue, /confirmInventoryTransaction/);
   assert.match(serviceWorker, /caches\.open/);
   assert.match(serviceWorker, /request\.mode === "navigate"/);
+  // Content-hashed build output must bypass the worker. Answering a module
+  // request from Cache Storage makes Chrome discard the matching preload hint
+  // ("cross-world service worker resource mismatch") and download the chunk
+  // twice, and can serve a stale chunk from an older deployment.
+  assert.match(serviceWorker, /const buildAssetPrefixes = \["\/assets\/"/);
+  assert.match(serviceWorker, /if \(isBuildAsset\(url\.pathname\)\) return;/);
   assert.match(manifest, /"display": "standalone"/);
   assert.match(manifest, /"start_url": "\/"/);
 });
